@@ -13,7 +13,9 @@ import { readCachedProvider } from "../../src/cache.js";
 import { renderAuthToon } from "../../src/render.js";
 vi.mock("node:fs/promises", () => ({ lstat: vi.fn() }));
 vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => ({
-  ...(await actual<typeof import("../../src/providers/copilot-cli-credential.js")>()),
+  ...(await actual<
+    typeof import("../../src/providers/copilot-cli-credential.js")
+  >()),
   COPILOT_CLI_SOURCE: "copilot-cli:keychain",
   resolveCopilotCliCredential: vi.fn(),
 }));
@@ -50,7 +52,9 @@ function nativeUnavailable(error: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("COPILOT_HOME", "/synthetic/copilot");
-  vi.mocked(lstat).mockRejectedValue(Object.assign(new Error(), { code: "ENOENT" }));
+  vi.mocked(lstat).mockRejectedValue(
+    Object.assign(new Error(), { code: "ENOENT" }),
+  );
   vi.mocked(readJsonFileResult).mockReturnValue({ status: "missing" });
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
     status: "resolved",
@@ -81,14 +85,18 @@ describe("Copilot secure-source integration", () => {
       const cached = await fetchQuota(options);
       vi.mocked(readCachedProvider).mockReturnValue(cached);
       if (metadata === "present")
-        vi.mocked(lstat).mockResolvedValue({} as Awaited<ReturnType<typeof lstat>>);
+        vi.mocked(lstat).mockResolvedValue(
+          {} as Awaited<ReturnType<typeof lstat>>,
+        );
       else
         vi.mocked(lstat).mockRejectedValue(
           Object.assign(new Error(), {
             code: metadata === "absent" ? "ENOENT" : "EACCES",
           }),
         );
-      vi.mocked(providerFetch).mockClear().mockRejectedValue(new Error("network failed"));
+      vi.mocked(providerFetch)
+        .mockClear()
+        .mockRejectedValue(new Error("network failed"));
       const result = await fetchQuota(options);
       expect(result.state.stale).toBe(stale);
       expect(result.windows).toEqual(stale ? cached.windows : []);
