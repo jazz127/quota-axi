@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchQuota, inspectAuth } from "../../src/providers/copilot.js";
 import {
   resolveCopilotCliCredential,
@@ -9,7 +11,9 @@ import { readJsonFileResult } from "../../src/lib/fs.js";
 import { providerFetch } from "../../src/lib/http.js";
 import { readCachedProvider } from "../../src/cache.js";
 import { renderAuthToon } from "../../src/render.js";
-vi.mock("../../src/providers/copilot-cli-credential.js", () => ({
+vi.mock("node:fs/promises", () => ({ lstat: vi.fn() }));
+vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => ({
+  ...(await actual<typeof import("../../src/providers/copilot-cli-credential.js")>()),
   COPILOT_CLI_SOURCE: "copilot-cli:keychain",
   resolveCopilotCliCredential: vi.fn(),
 }));
@@ -45,6 +49,8 @@ function nativeUnavailable(error: string) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("COPILOT_HOME", "/synthetic/copilot");
+  vi.mocked(lstat).mockRejectedValue(Object.assign(new Error(), { code: "ENOENT" }));
   vi.mocked(readJsonFileResult).mockReturnValue({ status: "missing" });
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
     status: "resolved",
@@ -59,7 +65,42 @@ beforeEach(() => {
   vi.mocked(providerFetch).mockImplementation(async () => response());
   vi.mocked(readCachedProvider).mockReturnValue(undefined);
 });
+afterEach(() => vi.unstubAllEnvs());
 describe("Copilot secure-source integration", () => {
+  it.each([
+    ["present", false],
+    ["absent", true],
+    ["unreadable", false],
+  ] as const)(
+    "allows legacy cache after apps transport failure only for confirmed native absence: %s",
+    async (metadata, stale) => {
+      vi.mocked(readJsonFileResult).mockReturnValue({
+        status: "success",
+        value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+      });
+      const cached = await fetchQuota(options);
+      vi.mocked(readCachedProvider).mockReturnValue(cached);
+      if (metadata === "present")
+        vi.mocked(lstat).mockResolvedValue({} as Awaited<ReturnType<typeof lstat>>);
+      else
+        vi.mocked(lstat).mockRejectedValue(
+          Object.assign(new Error(), {
+            code: metadata === "absent" ? "ENOENT" : "EACCES",
+          }),
+        );
+      vi.mocked(providerFetch).mockClear().mockRejectedValue(new Error("network failed"));
+      const result = await fetchQuota(options);
+      expect(result.state.stale).toBe(stale);
+      expect(result.windows).toEqual(stale ? cached.windows : []);
+      expect(lstat).toHaveBeenCalledExactlyOnceWith(
+        join("/synthetic/copilot", "config.json"),
+      );
+      expect(providerFetch).toHaveBeenCalledOnce();
+      expect(resolveCopilotCliCredential).not.toHaveBeenCalled();
+      expect(resolveGhCliCredential).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps apps precedence and never even resolves the secure source when apps works", async () => {
     vi.mocked(readJsonFileResult).mockReturnValue({
       status: "success",
