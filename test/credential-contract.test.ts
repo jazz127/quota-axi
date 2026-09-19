@@ -216,10 +216,9 @@ describe("credential source contract", { timeout: 30_000 }, () => {
   });
 
   /**
-   * GitHub Copilot has two independent stores and no stored expiry: Copilot's
-   * own `apps.json`, then the GitHub CLI login. Neither ever reads as absent
-   * once it holds something, and no readable token is skipped before a
-   * sign-in verdict.
+   * Copilot source ordering and unsupported-storage verdicts are documented
+   * in README Provider notes. Present but unusable stores must remain visible
+   * when a sibling source answers.
    */
   describe("copilot", () => {
     const copilotSources = [
