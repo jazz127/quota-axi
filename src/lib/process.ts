@@ -7,6 +7,7 @@ export function execFileText(
   command: string,
   args: string[],
   timeoutMs: number,
+  maxBufferBytes = 16 * 1024 * 1024,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let invocation: ReturnType<typeof shimInvocation>;
@@ -23,7 +24,7 @@ export function execFileText(
         timeout: timeoutMs,
         // A busy multi-agent host's full `ps` table with command lines runs
         // well past 1 MiB, which surfaced as an unexplained probe failure.
-        maxBuffer: 16 * 1024 * 1024,
+        maxBuffer: maxBufferBytes,
         ...(invocation.environment ? { env: invocation.environment } : {}),
       },
       (error, stdout) => {

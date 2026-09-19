@@ -35,6 +35,11 @@ import {
   resolveGhCliCredential,
 } from "./gh-cli-credential.js";
 
+import {
+  COPILOT_CLI_SOURCE,
+  resolveCopilotCliCredential,
+} from "./copilot-cli-credential.js";
+
 const USER_URL = "https://api.github.com/copilot_internal/user";
 const USER_HOST = new URL(USER_URL).hostname;
 const API_TIMEOUT_MS = 15_000;
@@ -49,13 +54,14 @@ const SIGN_IN_REQUIRED = "GitHub Copilot sign-in required";
 
 /**
  * GitHub Copilot's credential stores in ownership-stability order. `apps.json`
- * is Copilot's own store and answers first exactly as it always has. The GitHub
- * CLI login belongs to a sibling tool, so it is consulted only after
- * `apps.json` cannot answer for a credential reason; a transport, decoding,
+ * is Copilot's legacy store and answers first exactly as it always has. Its
+ * native CLI Keychain source is next. The GitHub CLI login belongs to a sibling
+ * tool and answers last. Handover is for credential problems only; transport, decoding,
  * rate-limit, or server failure is about the request and stops the search.
  */
 const COPILOT_SOURCE_ORDER = [
   APPS_JSON_SOURCE,
+  COPILOT_CLI_SOURCE,
   GH_CLI_CREDENTIAL_SOURCE,
 ] as const;
 
@@ -101,15 +107,26 @@ export const copilotAdapter: ProviderAdapter = {
 };
 
 export async function fetchQuota(
-  _options: ProviderOptions,
+  options: ProviderOptions,
 ): Promise<ProviderQuota> {
   const attempts: SourceAttempt[] = [];
   let failure: CopilotFailure | undefined;
+  let unavailable: string | undefined;
+  let nativePresent = false;
 
   for (const source of COPILOT_SOURCE_ORDER) {
-    const resolution = await resolveCopilotCredential(source);
+    const resolution = await resolveCopilotCredential(source, options);
+    if (source === COPILOT_CLI_SOURCE && resolution.status !== "absent")
+      nativePresent = true;
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
+      if (
+        (source === COPILOT_CLI_SOURCE && resolution.status !== "absent") ||
+        (source === GH_CLI_CREDENTIAL_SOURCE &&
+          resolution.status === "unsupported")
+      ) {
+        unavailable ??= resolution.report.error ?? "credentials_unavailable";
+      }
       continue;
     }
 
@@ -152,7 +169,7 @@ export async function fetchQuota(
       return successProvider({
         provider: "copilot",
         label: "GitHub Copilot",
-        source: "api",
+        source: source === COPILOT_CLI_SOURCE ? "cli" : "api",
         plan: quota.plan,
         account: quota.account,
         windows: quota.windows,
@@ -163,10 +180,16 @@ export async function fetchQuota(
     }
 
     if (selection.outcome === "all_rejected") {
+      if (source === COPILOT_CLI_SOURCE)
+        unavailable ??=
+          "GitHub Copilot credential rejected or quota access denied";
       attempts[attempts.length - 1] = {
         source: attemptSource,
         status: "failed",
-        error: SIGN_IN_REQUIRED,
+        error:
+          source === COPILOT_CLI_SOURCE
+            ? "GitHub Copilot credential rejected or quota access denied"
+            : SIGN_IN_REQUIRED,
       };
       continue;
     }
@@ -182,9 +205,14 @@ export async function fetchQuota(
     break;
   }
 
-  const verdict: CopilotFailure = failure ?? { error: SIGN_IN_REQUIRED };
+  const verdict: CopilotFailure = failure ?? {
+    error: unavailable ?? SIGN_IN_REQUIRED,
+  };
+  // Native snapshots have no established revalidation contract across CLI
+  // profile/account changes. Never serve them as stale, or substitute an older
+  // legacy source snapshot for a present but unmeasurable native selection.
   const cached = readCachedProvider("copilot");
-  if (cached) {
+  if (cached && cached.source !== "cli" && !nativePresent) {
     return staleFromCache(
       cached,
       verdict.error,
@@ -193,35 +221,64 @@ export async function fetchQuota(
     );
   }
 
-  return failedProvider({
+  const result = failedProvider({
     provider: "copilot",
     label: "GitHub Copilot",
-    status: verdict.retryAfter
-      ? "rate_limited"
-      : statusFromError(verdict.error),
+    status:
+      !failure && unavailable
+        ? "unavailable"
+        : verdict.retryAfter
+          ? "rate_limited"
+          : statusFromError(verdict.error),
     error: verdict.error,
     retryAfter: verdict.retryAfter,
     sourcesTried: sourceNames(attempts),
     attempts,
   });
+  if (!failure && unavailable === "keychain_prompt_required") {
+    result.state.reason = "keychain_access_required";
+    result.state.remedyCommand =
+      "quota-axi --provider copilot --allow-keychain-prompt";
+  }
+  return result;
 }
 
 export async function inspectAuth(
-  _options: ProviderOptions,
+  options: ProviderOptions,
 ): Promise<AuthProviderReport> {
   const sources: AuthSourceReport[] = [];
   for (const source of COPILOT_SOURCE_ORDER) {
-    sources.push((await resolveCopilotCredential(source)).report);
+    sources.push(
+      (
+        await resolveCopilotCredential(
+          source,
+          options,
+          !options.allowKeychainPrompt,
+        )
+      ).report,
+    );
   }
   return { provider: "copilot", sources };
 }
 
 async function resolveCopilotCredential(
   source: CopilotSource,
+  options: ProviderOptions,
+  presenceOnly = false,
 ): Promise<CopilotCredentialResolution> {
   if (source === APPS_JSON_SOURCE) {
     const authFile = copilotAppsFile();
     return extractCredentialState(readJsonFileResult(authFile), authFile);
+  }
+  if (source === COPILOT_CLI_SOURCE) {
+    const result = await resolveCopilotCliCredential(options, presenceOnly);
+    return result.status === "resolved"
+      ? {
+          status: "resolved",
+          credentials: { oauthToken: result.token },
+          report: result.report,
+        }
+      : result;
   }
   return fromGhCliResolution(await resolveGhCliCredential());
 }
@@ -281,6 +338,16 @@ function unavailableAttempt(
   source: CopilotSource,
   resolution: UnavailableResolution,
 ): SourceAttempt {
+  if (source === COPILOT_CLI_SOURCE) {
+    return {
+      source,
+      status: "skipped",
+      error: resolution.report.error ?? "credentials_missing",
+      ...(resolution.report.credentialPresent
+        ? { credentialPresent: true }
+        : {}),
+    };
+  }
   if (resolution.status === "absent") {
     return { source, status: "skipped", error: "credentials_missing" };
   }
@@ -346,6 +413,7 @@ async function fetchCopilotUser(credentials: CopilotCredentials): Promise<{
   const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
     const response = await providerFetch(USER_URL, {
+      redirect: "error",
       headers: {
         authorization: `Bearer ${credentials.oauthToken}`,
         accept: "application/json",
@@ -576,9 +644,13 @@ function numberValue(value: unknown): number | undefined {
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.name === "AbortError")
     return "GitHub Copilot quota request timed out";
-  return error instanceof Error
-    ? error.message
-    : "GitHub Copilot quota unavailable";
+  if (error instanceof RateLimitError) return error.message;
+  if (
+    error instanceof Error &&
+    /^GitHub Copilot quota unavailable(?: \(\d{3}\))?$/.test(error.message)
+  )
+    return error.message;
+  return "GitHub Copilot quota request failed";
 }
 
 /** A first-party 401/403: the only probe outcome that is an auth verdict. */

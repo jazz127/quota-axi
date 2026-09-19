@@ -89,6 +89,7 @@ const ENV_KEYS = [
   "XDG_DATA_HOME",
   "GITHUB_COPILOT_APPS_JSON",
   "GH_CONFIG_DIR",
+  "COPILOT_HOME",
 ] as const;
 
 const originalEnv = Object.fromEntries(
@@ -115,6 +116,7 @@ beforeEach(() => {
     "apps.json",
   );
   process.env.GH_CONFIG_DIR = join(tempDir, "gh");
+  process.env.COPILOT_HOME = join(tempDir, "copilot");
   delete process.env.GROK_AUTH;
   delete process.env.GROK_AUTH_JSON;
   delete process.env.GROK_AUTH_PATH;
@@ -220,7 +222,11 @@ describe("credential source contract", { timeout: 30_000 }, () => {
    * sign-in verdict.
    */
   describe("copilot", () => {
-    const copilotSources = ["apps-json", "gh:hosts.yml"];
+    const copilotSources = [
+      "apps-json",
+      "copilot-cli:keychain",
+      "gh:hosts.yml",
+    ];
 
     function writeAppsJson(text: string): void {
       const path = process.env.GITHUB_COPILOT_APPS_JSON!;
@@ -278,7 +284,7 @@ describe("credential source contract", { timeout: 30_000 }, () => {
       ["a token reference", "github.com:\n  oauth_token: $GH_TOKEN\n"],
     ])(
       "marks a present but unusable GitHub CLI store (%s) as a credential that exists",
-      async (_label, text) => {
+      async (label, text) => {
         writeGhHosts(text);
         stubRejectingApi();
 
@@ -289,7 +295,39 @@ describe("credential source contract", { timeout: 30_000 }, () => {
         for (const attempt of attempts) {
           expect(attempt.credentialPresent).toBe(true);
         }
-        expect(result.state.status).toBe("auth_required");
+        expect(result.state.status).toBe(
+          label === "keyring storage" ? "unavailable" : "auth_required",
+        );
+      },
+    );
+
+    it.each([
+      "{invalid",
+      JSON.stringify({
+        lastLoggedInUser: {
+          host: "https://github.com",
+          login: "synthetic-user",
+        },
+      }),
+    ])(
+      "keeps a present unsupported native source visible when a sibling answers",
+      async (text) => {
+        const dir = process.env.COPILOT_HOME!;
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "config.json"), text);
+        writeGhHosts("github.com:\n  oauth_token: gho_synthetic\n");
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(
+            async () =>
+              new Response(JSON.stringify({ copilot_plan: "individual" })),
+          ),
+        );
+        const result = await readQuota("copilot");
+        expect(result.state.status).toBe("fresh");
+        expect(
+          attemptsFor(result, "copilot-cli:keychain")[0].credentialPresent,
+        ).toBe(true);
       },
     );
 
