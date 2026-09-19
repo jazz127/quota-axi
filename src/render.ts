@@ -505,9 +505,17 @@ export function renderAuthToon(
         "Inspect local quota auth sources without printing secret values",
     }),
     encode({ auth: sources }),
-    renderHelp([
-      "Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access",
-    ]),
+    ...(reports.some((report) =>
+      report.sources.some(
+        (source) => source.error === "keychain_prompt_required",
+      ),
+    )
+      ? [
+          renderHelp([
+            "Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access",
+          ]),
+        ]
+      : []),
   ].join("\n");
 }
 
