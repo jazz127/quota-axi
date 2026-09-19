@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, renameSync, writeFileSync } from "node:fs";
+import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -13,6 +14,21 @@ export const COPILOT_CLI_SOURCE = "copilot-cli:keychain";
 const SERVICE = "copilot-cli";
 const FILE_LIMIT = 1024 * 1024;
 const TOKEN_LIMIT = 16 * 1024;
+
+function copilotCliConfigPath(
+  home = process.env.COPILOT_HOME || join(homedir(), ".copilot"),
+): string {
+  return join(home, "config.json");
+}
+
+export async function copilotCliConfigAbsent(): Promise<boolean> {
+  try {
+    await lstat(copilotCliConfigPath());
+    return false;
+  } catch (error) {
+    return code(error) === "ENOENT";
+  }
+}
 
 type Identity = { host: string; login: string; account: string };
 export type CopilotCliCredentialResolution =
@@ -57,7 +73,7 @@ export async function resolveCopilotCliCredential(
   };
   const defaultHome = join(deps.homeDirectory(), ".copilot");
   const home = deps.environment.COPILOT_HOME || defaultHome;
-  const path = join(home, "config.json");
+  const path = copilotCliConfigPath(home);
   const state = (
     status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
     error?: string,

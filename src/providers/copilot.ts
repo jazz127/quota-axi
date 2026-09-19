@@ -37,6 +37,7 @@ import {
 
 import {
   COPILOT_CLI_SOURCE,
+  copilotCliConfigAbsent,
   resolveCopilotCliCredential,
 } from "./copilot-cli-credential.js";
 
@@ -112,12 +113,12 @@ export async function fetchQuota(
   const attempts: SourceAttempt[] = [];
   let failure: CopilotFailure | undefined;
   let unavailable: string | undefined;
-  let nativePresent = false;
+  let nativeAbsent: boolean | undefined;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
-    if (source === COPILOT_CLI_SOURCE && resolution.status !== "absent")
-      nativePresent = true;
+    if (source === COPILOT_CLI_SOURCE)
+      nativeAbsent = resolution.status === "absent";
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
       if (
@@ -212,7 +213,11 @@ export async function fetchQuota(
   // profile/account changes. Never serve them as stale, or substitute an older
   // legacy source snapshot for a present but unmeasurable native selection.
   const cached = readCachedProvider("copilot");
-  if (cached && cached.source !== "cli" && !nativePresent) {
+  if (
+    cached &&
+    cached.source !== "cli" &&
+    (nativeAbsent ?? (await copilotCliConfigAbsent()))
+  ) {
     return staleFromCache(
       cached,
       verdict.error,
