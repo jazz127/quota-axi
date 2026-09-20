@@ -216,7 +216,6 @@ export async function fetchQuota(
       COPILOT_CLI_SOURCE,
       options,
     );
-    nativeResolved = true;
     nativeSilent = resolution.silent ?? false;
     nativePromptRequired =
       resolution.report.error === "keychain_prompt_required";

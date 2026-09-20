@@ -25,9 +25,9 @@ It is data only: it never routes, recommends a provider, model, harness, credent
 
 ## Quick Start
 
-**Credential-source note:** Claude Code and the Cursor CLI (`cursor-agent`) keep live tokens in the macOS Keychain; Linux `cursor-agent` stores its access token in `~/.config/cursor/auth.json` (or the XDG/`$CURSOR_CLI_CONFIG` override).
-quota-axi does not read macOS Keychain values until the user grants permission, so Claude quota can stay stale and CLI-only Cursor auth can appear unavailable when no other usable credential exists. On Linux it reads only the auth file's `accessToken` and never its refresh token.
-Run `quota-axi --allow-keychain-prompt` once and approve Keychain access with "Always Allow".
+**Credential-source note:** Claude Code, the Cursor CLI (`cursor-agent`), and Copilot CLI keep live tokens in native secure stores on supported platforms. Linux `cursor-agent` stores its access token in `~/.config/cursor/auth.json` (or the XDG/`$CURSOR_CLI_CONFIG` override); Copilot CLI uses Windows Credential Manager on Windows and the macOS Keychain on macOS.
+quota-axi does not read native secure-store values until the user grants permission, so Claude quota, CLI-only Cursor auth, or Copilot CLI auth can stay stale or appear unavailable when no other usable credential exists. On Linux it reads only the Cursor auth file's `accessToken` and never its refresh token. Copilot's Windows path does not promise an OS prompt.
+Run `quota-axi --allow-keychain-prompt` once for the applicable provider and approve the macOS Keychain request when prompted.
 After a successful read, future non-interactive quota calls reuse the corresponding account-scoped grant without requiring the flag. Claude grants are also profile-scoped; legacy Claude markers created before account-pinned lookup are not reused.
 
 ```sh
