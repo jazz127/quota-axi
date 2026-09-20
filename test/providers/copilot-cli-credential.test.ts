@@ -260,6 +260,10 @@ describe("Copilot CLI selected Keychain item", () => {
   it.each([
     [{ code: 36 }, "keychain_access_denied"],
     [{ killed: true }, "keychain_prompt_timeout"],
+    [
+      { killed: true, code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" },
+      "credential_format_unsupported",
+    ],
     [{ code: 44 }, "keychain_item_unavailable"],
   ])("sanitizes Keychain failure %j", async (error, reason) => {
     const deps = fixture();

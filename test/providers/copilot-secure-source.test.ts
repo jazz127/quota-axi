@@ -1,4 +1,3 @@
-import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchQuota, inspectAuth } from "../../src/providers/copilot.js";
@@ -7,11 +6,10 @@ import {
   COPILOT_CLI_SOURCE,
 } from "../../src/providers/copilot-cli-credential.js";
 import { resolveGhCliCredential } from "../../src/providers/gh-cli-credential.js";
-import { readJsonFileResult } from "../../src/lib/fs.js";
+import { readBoundedFile, readJsonFileResult } from "../../src/lib/fs.js";
 import { providerFetch } from "../../src/lib/http.js";
 import { readCachedProvider } from "../../src/cache.js";
 import { degradedSources } from "../../src/lib/source-attempts.js";
-vi.mock("node:fs/promises", () => ({ lstat: vi.fn() }));
 vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => ({
   ...(await actual<
     typeof import("../../src/providers/copilot-cli-credential.js")
@@ -28,6 +26,7 @@ vi.mock("../../src/cache.js", () => ({ readCachedProvider: vi.fn() }));
 vi.mock("../../src/lib/fs.js", async (actual) => ({
   ...(await actual<typeof import("../../src/lib/fs.js")>()),
   readJsonFileResult: vi.fn(),
+  readBoundedFile: vi.fn(),
 }));
 const options = { allowKeychainPrompt: false, refreshCredentials: false };
 const nativeToken = "gho_native_synthetic";
@@ -38,6 +37,11 @@ const body = {
 function response(status = 200, headers?: HeadersInit) {
   return new Response(JSON.stringify(body), { status, headers });
 }
+const selectedAccountConfig = Buffer.from(
+  JSON.stringify({
+    lastLoggedInUser: { host: "https://github.com", login: "octocat" },
+  }),
+);
 function nativeUnavailable(error: string) {
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
     status: "unsupported",
@@ -52,9 +56,7 @@ function nativeUnavailable(error: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("COPILOT_HOME", "/synthetic/copilot");
-  vi.mocked(lstat).mockRejectedValue(
-    Object.assign(new Error(), { code: "ENOENT" }),
-  );
+  vi.mocked(readBoundedFile).mockResolvedValue(selectedAccountConfig);
   vi.mocked(readJsonFileResult).mockReturnValue({ status: "missing" });
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
     status: "resolved",
@@ -72,26 +74,30 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 describe("Copilot secure-source integration", () => {
   it.each([
-    ["present", false],
+    ["selects an account", false],
+    ["selects no account", true],
     ["absent", true],
     ["unreadable", false],
   ] as const)(
-    "allows legacy cache after apps transport failure only for confirmed native absence: %s",
-    async (metadata, stale) => {
+    "allows legacy cache after apps transport failure only when the native source could not have answered: %s",
+    async (config, stale) => {
       vi.mocked(readJsonFileResult).mockReturnValue({
         status: "success",
         value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
       });
       const cached = await fetchQuota(options);
       vi.mocked(readCachedProvider).mockReturnValue(cached);
-      if (metadata === "present")
-        vi.mocked(lstat).mockResolvedValue(
-          {} as Awaited<ReturnType<typeof lstat>>,
+      vi.mocked(readBoundedFile).mockClear();
+      if (config === "selects an account")
+        vi.mocked(readBoundedFile).mockResolvedValue(selectedAccountConfig);
+      else if (config === "selects no account")
+        vi.mocked(readBoundedFile).mockResolvedValue(
+          Buffer.from(JSON.stringify({ theme: "dark" })),
         );
       else
-        vi.mocked(lstat).mockRejectedValue(
+        vi.mocked(readBoundedFile).mockRejectedValue(
           Object.assign(new Error(), {
-            code: metadata === "absent" ? "ENOENT" : "EACCES",
+            code: config === "absent" ? "ENOENT" : "EACCES",
           }),
         );
       vi.mocked(providerFetch)
@@ -100,8 +106,9 @@ describe("Copilot secure-source integration", () => {
       const result = await fetchQuota(options);
       expect(result.state.stale).toBe(stale);
       expect(result.windows).toEqual(stale ? cached.windows : []);
-      expect(lstat).toHaveBeenCalledExactlyOnceWith(
+      expect(readBoundedFile).toHaveBeenCalledExactlyOnceWith(
         join("/synthetic/copilot", "config.json"),
+        expect.any(Number),
       );
       expect(providerFetch).toHaveBeenCalledOnce();
       expect(resolveCopilotCliCredential).not.toHaveBeenCalled();
@@ -116,7 +123,6 @@ describe("Copilot secure-source integration", () => {
     });
     const cached = await fetchQuota(options);
     vi.mocked(readCachedProvider).mockReturnValue(cached);
-    vi.mocked(lstat).mockResolvedValue({} as Awaited<ReturnType<typeof lstat>>);
     vi.mocked(providerFetch)
       .mockClear()
       .mockRejectedValue(new Error("network failed"));
@@ -148,8 +154,31 @@ describe("Copilot secure-source integration", () => {
   it("keeps sign-in required when no secure store could ever answer", async () => {
     nativeUnavailable("secure_store_unsupported");
     vi.mocked(providerFetch).mockResolvedValue(response(403));
-    const result = await fetchQuota(options);
-    expect(result.state).toMatchObject({
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    try {
+      expect((await fetchQuota(options)).state).toMatchObject({
+        status: "auth_required",
+        error: "GitHub Copilot sign-in required",
+      });
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  });
+
+  it("keeps sign-in required when the native config selects no account", async () => {
+    nativeUnavailable("selected_account_unconfirmed");
+    vi.mocked(readBoundedFile).mockResolvedValue(
+      Buffer.from(JSON.stringify({ theme: "dark" })),
+    );
+    vi.mocked(resolveGhCliCredential).mockResolvedValue({
+      status: "absent",
+      path: "/synthetic/gh",
+    });
+    expect((await fetchQuota(options)).state).toMatchObject({
       status: "auth_required",
       error: "GitHub Copilot sign-in required",
     });
@@ -285,9 +314,18 @@ describe("Copilot secure-source integration", () => {
     vi.mocked(readCachedProvider).mockReturnValue(cached);
     nativeUnavailable("secure_store_unsupported");
     vi.mocked(providerFetch).mockClear().mockResolvedValue(response(500));
-    const result = await fetchQuota(options);
-    expect(result.state.stale).toBe(true);
-    expect(result.windows).toEqual(cached.windows);
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    try {
+      const result = await fetchQuota(options);
+      expect(result.state.stale).toBe(true);
+      expect(result.windows).toEqual(cached.windows);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
   });
 
   it("keeps entitlement without numeric quota distinct from source failure", async () => {
