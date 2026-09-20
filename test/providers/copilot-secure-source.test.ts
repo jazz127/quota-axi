@@ -45,6 +45,11 @@ const selectedAccountConfig = Buffer.from(
 function nativeUnavailable(error: string, credentialPresent = true) {
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
     status: "unsupported",
+    silent: [
+      "secure_store_unsupported",
+      "keychain_prompt_required",
+      "selected_account_unconfirmed",
+    ].includes(error),
     report: {
       source: COPILOT_CLI_SOURCE,
       status: "skipped",
@@ -61,6 +66,7 @@ beforeEach(() => {
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
     status: "resolved",
     token: nativeToken,
+    silent: false,
     report: { source: COPILOT_CLI_SOURCE, status: "available" },
   });
   vi.mocked(resolveGhCliCredential).mockResolvedValue({
@@ -201,6 +207,7 @@ describe("Copilot secure-source integration", () => {
   it("names a broken native store as degraded when a sibling answers", async () => {
     vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
       status: "read_error",
+      silent: false,
       report: {
         source: COPILOT_CLI_SOURCE,
         status: "error",
@@ -304,8 +311,8 @@ describe("Copilot secure-source integration", () => {
     nativeUnavailable("keychain_prompt_required");
     vi.mocked(providerFetch).mockClear().mockResolvedValue(response(500));
     const result = await fetchQuota(options);
-    expect(result.state.stale).toBe(false);
-    expect(result.windows).toEqual([]);
+    expect(result.state.stale).toBe(true);
+    expect(result.windows).toEqual(cached.windows);
   });
 
   it("keeps legacy stale cache when the platform has no native secure store", async () => {
@@ -395,10 +402,11 @@ describe("Copilot secure-source integration", () => {
       path: "/synthetic/gh",
     });
     const result = await fetchQuota(options);
-    expect(result.state).toMatchObject({
-      status: "unavailable",
-      error: reason,
-    });
+    expect(result.state).toMatchObject(
+      reason === "keychain_prompt_required"
+        ? { status: "auth_required", error: "GitHub Copilot sign-in required" }
+        : { status: "unavailable", error: reason },
+    );
     expect(result.state.remedyCommand).toBeUndefined();
     expect(providerFetch).not.toHaveBeenCalled();
   });
@@ -420,6 +428,7 @@ describe("Copilot secure-source integration", () => {
     vi.mocked(readCachedProvider).mockReturnValue(cached);
     vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
       status: "absent",
+      silent: true,
       report: { source: COPILOT_CLI_SOURCE, status: "missing" },
     });
     vi.mocked(resolveGhCliCredential).mockResolvedValue({
