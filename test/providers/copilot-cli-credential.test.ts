@@ -102,9 +102,10 @@ describe("Copilot CLI selected Keychain item", () => {
       ...data,
       copilotTokens: { "https://github.com:other-user": token },
     });
-    expect(
-      (await resolveCopilotCliCredential(options, false, deps)).report.error,
-    ).toBe("selected_account_unconfirmed");
+    const report = (await resolveCopilotCliCredential(options, false, deps))
+      .report;
+    expect(report.error).toBe("selected_account_unconfirmed");
+    expect(report.credentialPresent).toBeUndefined();
     expect(deps.run).not.toHaveBeenCalled();
   });
   it.each([

@@ -193,10 +193,31 @@ $ quota-axi --provider claude --json
 ```
 
 ```sh
-quota-axi auth
+$ quota-axi auth
+bin: ~/.npm/_npx/.../quota-axi
+description: Inspect local quota auth sources without printing secret values
+auth[18]{provider,source,path,status,error}:
+  claude,oauth-file,~/.claude/.credentials.json,available,none
+  claude,keychain,none,skipped,keychain_prompt_required
+  codex,auth-json,~/.codex/auth.json,available,none
+  codex,pi:openai-codex,~/.pi/agent/auth.json,available,none
+  codex,cli-rpc,~/.local/bin/codex,available,none
+  cursor,state-vscdb,~/Library/Application Support/Cursor/User/globalStorage/state.vscdb,available,none
+  cursor,cli-keychain,~/.cursor/cli-config.json,skipped,keychain_prompt_required
+  copilot,apps-json,~/.config/github-copilot/apps.json,available,none
+  copilot,copilot-cli:keychain,~/.copilot/config.json,skipped,keychain_prompt_required
+  copilot,gh:hosts.yml,~/.config/gh/hosts.yml,available,none
+  grok,auth-json,~/.grok/auth.json,available,none
+  kimi,pi:kimi-coding,none,available,none
+  kimi,kimi-code-cli,none,available,none
+  zai,pi:zai,~/.pi/agent/auth.json,missing,none
+  zai,opencode:auth.json,~/.local/share/opencode/auth.json,available,none
+  agy,loopback,none,available,none
+  alibaba,bl-cli,none,available,none
+  opencode-go,opencode:auth.json,~/.local/share/opencode/auth.json,available,none
+help[1]:
+  Run `quota-axi --allow-keychain-prompt auth` to permit native secure-store access
 ```
-
-This lists local credential sources without printing secrets; see [Output Model](#output-model) for the source fields and [Provider notes](#provider-notes) for storage and Keychain access rules.
 
 ## Install
 

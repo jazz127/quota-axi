@@ -346,12 +346,9 @@ function unavailableAttempt(
   resolution: UnavailableResolution,
 ): SourceAttempt {
   if (source === COPILOT_CLI_SOURCE) {
-    // A platform with no secure store, and a consent gate carrying its own
-    // remedy, are structural non-answers rather than a broken store.
-    const structural =
-      resolution.status === "unsupported" &&
-      (resolution.report.error === "secure_store_unsupported" ||
-        resolution.report.error === "keychain_prompt_required");
+    // An unsupported selection or a consent gate is a structural non-answer
+    // rather than a broken store; the resolver already withholds
+    // `credentialPresent` where no account was selected at all.
     return {
       source,
       status: "skipped",
@@ -359,7 +356,7 @@ function unavailableAttempt(
       ...(resolution.report.credentialPresent
         ? { credentialPresent: true }
         : {}),
-      ...(structural ? { degraded: false } : {}),
+      ...(resolution.status === "unsupported" ? { degraded: false } : {}),
     };
   }
   if (resolution.status === "absent") {

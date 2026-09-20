@@ -75,6 +75,7 @@ function unresolved(
   path: string,
   status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
   error?: string,
+  silent = false,
 ): CopilotCliCredentialResolution {
   return {
     status,
@@ -90,7 +91,7 @@ function unresolved(
               ? "error"
               : "invalid",
       ...(error ? { error } : {}),
-      ...(status === "absent" ? {} : { credentialPresent: true }),
+      ...(status === "absent" || silent ? {} : { credentialPresent: true }),
     },
   };
 }
@@ -111,12 +112,15 @@ async function selectIdentity(
   const blocked = (
     status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
     error: string | undefined,
-    silent: boolean,
-  ): CopilotCliSelection => ({
-    kind: "blocked",
-    resolution: unresolved(path, status, error),
-    silent: silent || !secureStoreSupported(deps.platform),
-  });
+    structural: boolean,
+  ): CopilotCliSelection => {
+    const silent = structural || !secureStoreSupported(deps.platform);
+    return {
+      kind: "blocked",
+      resolution: unresolved(path, status, error, silent),
+      silent,
+    };
+  };
   let raw: Buffer;
   try {
     raw = await deps.readFile(path, FILE_LIMIT);
