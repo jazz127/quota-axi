@@ -145,6 +145,26 @@ describe("Copilot secure-source integration", () => {
     });
   });
 
+  it("keeps sign-in required when no secure store could ever answer", async () => {
+    nativeUnavailable("secure_store_unsupported");
+    vi.mocked(providerFetch).mockResolvedValue(response(403));
+    const result = await fetchQuota(options);
+    expect(result.state).toMatchObject({
+      status: "auth_required",
+      error: "GitHub Copilot sign-in required",
+    });
+  });
+
+  it.each(["secure_store_unsupported", "keychain_prompt_required"])(
+    "does not call a structural native non-answer degraded: %s",
+    async (reason) => {
+      nativeUnavailable(reason);
+      const result = await fetchQuota(options);
+      expect(result.state.status).toBe("fresh");
+      expect(degradedSources(result.attempts)).toEqual([]);
+    },
+  );
+
   it("names a broken native store as degraded when a sibling answers", async () => {
     vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
       status: "read_error",
@@ -315,7 +335,6 @@ describe("Copilot secure-source integration", () => {
     },
   );
   it.each([
-    "secure_store_unsupported",
     "copilot_home_unsupported",
     "keychain_access_denied",
     "keychain_prompt_timeout",

@@ -130,7 +130,7 @@ export async function fetchQuota(
           resolution.report.error === "secure_store_unsupported");
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
-      if (source === COPILOT_CLI_SOURCE && resolution.status !== "absent") {
+      if (source === COPILOT_CLI_SOURCE && !nativeSilent) {
         unavailable ??= resolution.report.error ?? "credentials_unavailable";
       }
       continue;
@@ -357,6 +357,12 @@ function unavailableAttempt(
   resolution: UnavailableResolution,
 ): SourceAttempt {
   if (source === COPILOT_CLI_SOURCE) {
+    // A platform with no secure store, and a consent gate carrying its own
+    // remedy, are structural non-answers rather than a broken store.
+    const structural =
+      resolution.status === "unsupported" &&
+      (resolution.report.error === "secure_store_unsupported" ||
+        resolution.report.error === "keychain_prompt_required");
     return {
       source,
       status: "skipped",
@@ -364,6 +370,7 @@ function unavailableAttempt(
       ...(resolution.report.credentialPresent
         ? { credentialPresent: true }
         : {}),
+      ...(structural ? { degraded: false } : {}),
     };
   }
   if (resolution.status === "absent") {
