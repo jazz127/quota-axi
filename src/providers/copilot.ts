@@ -37,7 +37,7 @@ import {
 
 import {
   COPILOT_CLI_SOURCE,
-  copilotCliConfigAbsent,
+  copilotCliSourceSilent,
   resolveCopilotCliCredential,
 } from "./copilot-cli-credential.js";
 
@@ -117,7 +117,8 @@ export async function fetchQuota(
   let rejected = false;
   // The native source can only speak for an account when it is able to answer
   // at all: an absent config, or a platform with no secure store to read.
-  // Every other unsupported reason still names a selected account.
+  // Every other unsupported reason still names a selected account. It stays
+  // undefined when an earlier source's transport failure ends the search.
   let nativeSilent: boolean | undefined;
 
   for (const source of COPILOT_SOURCE_ORDER) {
@@ -185,7 +186,9 @@ export async function fetchQuota(
     }
 
     if (selection.outcome === "all_rejected") {
-      rejected = true;
+      // A sibling tool's login carries no Copilot entitlement of its own, so
+      // its rejection is not evidence about this provider's account.
+      rejected ||= source !== GH_CLI_CREDENTIAL_SOURCE;
       attempts[attempts.length - 1] = {
         source: attemptSource,
         status: "failed",
@@ -226,7 +229,7 @@ export async function fetchQuota(
   if (
     cached &&
     cached.source !== "cli" &&
-    (nativeSilent ?? (await copilotCliConfigAbsent()))
+    (nativeSilent ?? (await copilotCliSourceSilent()))
   ) {
     return staleFromCache(
       cached,

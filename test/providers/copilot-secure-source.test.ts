@@ -10,6 +10,7 @@ import { resolveGhCliCredential } from "../../src/providers/gh-cli-credential.js
 import { readJsonFileResult } from "../../src/lib/fs.js";
 import { providerFetch } from "../../src/lib/http.js";
 import { readCachedProvider } from "../../src/cache.js";
+import { degradedSources } from "../../src/lib/source-attempts.js";
 vi.mock("node:fs/promises", () => ({ lstat: vi.fn() }));
 vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => ({
   ...(await actual<
@@ -107,6 +108,59 @@ describe("Copilot secure-source integration", () => {
       expect(resolveGhCliCredential).not.toHaveBeenCalled();
     },
   );
+
+  it("keeps legacy cache after apps transport failure on a platform with no secure store", async () => {
+    vi.mocked(readJsonFileResult).mockReturnValue({
+      status: "success",
+      value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+    });
+    const cached = await fetchQuota(options);
+    vi.mocked(readCachedProvider).mockReturnValue(cached);
+    vi.mocked(lstat).mockResolvedValue({} as Awaited<ReturnType<typeof lstat>>);
+    vi.mocked(providerFetch)
+      .mockClear()
+      .mockRejectedValue(new Error("network failed"));
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    try {
+      const result = await fetchQuota(options);
+      expect(result.state.stale).toBe(true);
+      expect(result.windows).toEqual(cached.windows);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+    expect(resolveCopilotCliCredential).not.toHaveBeenCalled();
+  });
+
+  it("keeps a sibling gh rejection from speaking for the native store", async () => {
+    nativeUnavailable("environment_selection_unsupported");
+    vi.mocked(providerFetch).mockResolvedValue(response(403));
+    const result = await fetchQuota(options);
+    expect(result.state).toMatchObject({
+      status: "unavailable",
+      error: "environment_selection_unsupported",
+    });
+  });
+
+  it("names a broken native store as degraded when a sibling answers", async () => {
+    vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
+      status: "read_error",
+      report: {
+        source: COPILOT_CLI_SOURCE,
+        status: "error",
+        error: "keychain_item_unavailable",
+        credentialPresent: true,
+      },
+    });
+    const result = await fetchQuota(options);
+    expect(result.state.status).toBe("fresh");
+    expect(degradedSources(result.attempts)).toEqual([
+      { source: COPILOT_CLI_SOURCE, error: "keychain_item_unavailable" },
+    ]);
+  });
 
   it("keeps apps precedence and never even resolves the secure source when apps works", async () => {
     vi.mocked(readJsonFileResult).mockReturnValue({

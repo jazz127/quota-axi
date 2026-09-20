@@ -22,7 +22,19 @@ function copilotCliConfigPath(
   return join(home, "config.json");
 }
 
-export async function copilotCliConfigAbsent(): Promise<boolean> {
+function secureStoreSupported(platform: NodeJS.Platform): boolean {
+  return platform === "darwin" || platform === "win32";
+}
+
+/**
+ * Whether the native source could name a selected account at all. A platform
+ * with no secure store never can, so its silence does not depend on whether
+ * the CLI left a config behind.
+ */
+export async function copilotCliSourceSilent(
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  if (!secureStoreSupported(platform)) return true;
   try {
     await lstat(copilotCliConfigPath());
     return false;
@@ -115,7 +127,7 @@ export async function resolveCopilotCliCredential(
     return state("structurally_invalid", "credentials_invalid");
   }
   if (!identity) return state("unsupported", "selected_account_unconfirmed");
-  if (deps.platform !== "darwin" && deps.platform !== "win32")
+  if (!secureStoreSupported(deps.platform))
     return state("unsupported", "secure_store_unsupported");
   if (resolve(home) !== resolve(defaultHome))
     return state("unsupported", "copilot_home_unsupported");
