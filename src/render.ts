@@ -485,17 +485,9 @@ export function renderAuthToon(
         "Inspect local quota auth sources without printing secret values",
     }),
     encode({ auth: sources }),
-    ...(reports.some((report) =>
-      report.sources.some(
-        (source) => source.error === "keychain_prompt_required",
-      ),
-    )
-      ? [
-          renderHelp([
-            "Run `quota-axi --allow-keychain-prompt auth` to permit native secure-store access",
-          ]),
-        ]
-      : []),
+    renderHelp([
+      "Run `quota-axi --allow-keychain-prompt auth` to permit native secure-store access",
+    ]),
   ].join("\n");
 }
 
