@@ -577,7 +577,7 @@ describe("GitHub Copilot credential sources", () => {
     });
   });
 
-  it("reports unsupported storage when the GitHub CLI login is in the keyring", async () => {
+  it("keeps the sign-in verdict when the GitHub CLI login is in the keyring", async () => {
     writeAppsJson({ "github.com": { oauth_token: "stale-apps-token" } });
     writeGhHosts(
       "github.com:\n    users:\n        fixture-user:\n    user: fixture-user\n",
@@ -586,8 +586,8 @@ describe("GitHub Copilot credential sources", () => {
 
     const result = await fetchQuota(options);
 
-    expect(result.state.status).toBe("unavailable");
-    expect(result.state.error).toBe("credentials_keyring_storage");
+    expect(result.state.status).toBe("auth_required");
+    expect(result.state.error).toBe("GitHub Copilot sign-in required");
     expect(api.bearers).toEqual(["Bearer stale-apps-token"]);
     expect(result.attempts?.[2]).toEqual({
       source: "gh:hosts.yml",

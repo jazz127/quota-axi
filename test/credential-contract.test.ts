@@ -365,7 +365,7 @@ describe("credential source contract", { timeout: 30_000 }, () => {
       ["a token reference", "github.com:\n  oauth_token: $GH_TOKEN\n"],
     ])(
       "marks a present but unusable GitHub CLI store (%s) as a credential that exists",
-      async (label, text) => {
+      async (_label, text) => {
         writeGhHosts(text);
         stubRejectingApi();
 
@@ -376,9 +376,7 @@ describe("credential source contract", { timeout: 30_000 }, () => {
         for (const attempt of attempts) {
           expect(attempt.credentialPresent).toBe(true);
         }
-        expect(result.state.status).toBe(
-          label === "keyring storage" ? "unavailable" : "auth_required",
-        );
+        expect(result.state.status).toBe("auth_required");
       },
     );
 

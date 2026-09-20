@@ -157,6 +157,34 @@ describe("Copilot secure-source integration", () => {
     );
     expect(resolveGhCliCredential).not.toHaveBeenCalled();
   });
+  it("still reports sign-in required when every source is rejected", async () => {
+    vi.mocked(readJsonFileResult).mockReturnValue({
+      status: "success",
+      value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+    });
+    vi.mocked(providerFetch).mockResolvedValue(response(401));
+    const result = await fetchQuota(options);
+    expect(result.state).toMatchObject({
+      status: "auth_required",
+      error: "GitHub Copilot sign-in required",
+    });
+  });
+
+  it("keeps legacy stale cache when the platform has no native secure store", async () => {
+    vi.mocked(readJsonFileResult).mockReturnValue({
+      status: "success",
+      value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+    });
+    const cached = await fetchQuota(options);
+    vi.mocked(readJsonFileResult).mockReturnValue({ status: "missing" });
+    vi.mocked(readCachedProvider).mockReturnValue(cached);
+    nativeUnavailable("secure_store_unsupported");
+    vi.mocked(providerFetch).mockClear().mockResolvedValue(response(500));
+    const result = await fetchQuota(options);
+    expect(result.state.stale).toBe(true);
+    expect(result.windows).toEqual(cached.windows);
+  });
+
   it("keeps entitlement without numeric quota distinct from source failure", async () => {
     vi.mocked(providerFetch).mockResolvedValue(
       new Response(JSON.stringify({ copilot_plan: "individual" })),

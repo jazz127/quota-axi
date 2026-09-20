@@ -197,18 +197,34 @@ describe("Copilot CLI selected Keychain item", () => {
     "COPILOT_GITHUB_TOKEN",
     "GH_HOST",
     "COPILOT_GH_HOST",
-  ])("does not read environment selector %s", async (name) => {
-    const deps = fixture();
-    Object.defineProperty(deps.environment, name, {
-      get() {
-        throw new Error("must not read");
-      },
-    });
-    expect(
-      (await resolveCopilotCliCredential(options, false, deps)).report.error,
-    ).toBe("environment_selection_unsupported");
-    expect(deps.run).not.toHaveBeenCalled();
-  });
+  ])(
+    "refuses environment selector %s without exposing its value",
+    async (name) => {
+      const deps = fixture();
+      deps.environment[name] = "gho_env_synthetic";
+      const result = await resolveCopilotCliCredential(options, false, deps);
+      expect(result.report.error).toBe("environment_selection_unsupported");
+      expect(JSON.stringify(result)).not.toContain("gho_env_synthetic");
+      expect(deps.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "COPILOT_GITHUB_TOKEN",
+    "GH_HOST",
+    "COPILOT_GH_HOST",
+  ])(
+    "lets a blank %s select nothing and keeps the stored path",
+    async (name) => {
+      const deps = fixture();
+      deps.environment[name] = "";
+      expect(
+        (await resolveCopilotCliCredential(options, false, deps)).status,
+      ).toBe("resolved");
+    },
+  );
   it("does metadata only on a plain call and ordinary auth even with a marker", async () => {
     const deps = fixture();
     const result = await resolveCopilotCliCredential(
