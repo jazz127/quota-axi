@@ -1,5 +1,4 @@
 import { chmodSync, existsSync, renameSync, writeFileSync } from "node:fs";
-import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -16,31 +15,12 @@ const SERVICE = "copilot-cli";
 const FILE_LIMIT = 1024 * 1024;
 const TOKEN_LIMIT = 16 * 1024;
 
-function copilotCliConfigPath(
-  home = process.env.COPILOT_HOME || join(homedir(), ".copilot"),
-): string {
+function copilotCliConfigPath(home: string): string {
   return join(home, "config.json");
 }
 
 function secureStoreSupported(platform: NodeJS.Platform): boolean {
   return platform === "darwin" || platform === "win32";
-}
-
-/**
- * Whether the native source could name a selected account at all. A platform
- * with no secure store never can, so its silence does not depend on whether
- * the CLI left a config behind.
- */
-export async function copilotCliSourceSilent(
-  platform: NodeJS.Platform = process.platform,
-): Promise<boolean> {
-  if (!secureStoreSupported(platform)) return true;
-  try {
-    await lstat(copilotCliConfigPath());
-    return false;
-  } catch (error) {
-    return code(error) === "ENOENT";
-  }
 }
 
 type Identity = { host: string; login: string; account: string };
@@ -62,20 +42,22 @@ type Dependencies = {
   recordGrant: (path: string, account: string) => void;
 };
 
-/**
- * Default-profile binding: macOS CLI 1.0.87-0 uses service copilot-cli and
- * account `${host}:${login}`. Windows CLI 1.0.86 uses a generic credential with
- * target `${account}.copilot-cli` and username `${account}`. See README for
- * the empirical validation boundary. Refuse unverified
- * selectors instead of guessing item names or trying another user's item.
- * See README's Copilot credential notes for the supported boundary.
- */
-export async function resolveCopilotCliCredential(
-  options: ProviderOptions,
-  presenceOnly = false,
-  overrides: Partial<Dependencies> = {},
-): Promise<CopilotCliCredentialResolution> {
-  const deps: Dependencies = {
+type CopilotCliSelection =
+  | {
+      kind: "identity";
+      identity: Identity;
+      path: string;
+      home: string;
+      defaultHome: string;
+    }
+  | {
+      kind: "blocked";
+      resolution: CopilotCliCredentialResolution;
+      silent: boolean;
+    };
+
+function dependencies(overrides: Partial<Dependencies>): Dependencies {
+  return {
     environment: process.env,
     platform: process.platform,
     homeDirectory: homedir,
@@ -87,13 +69,14 @@ export async function resolveCopilotCliCredential(
     recordGrant,
     ...overrides,
   };
-  const defaultHome = join(deps.homeDirectory(), ".copilot");
-  const home = deps.environment.COPILOT_HOME || defaultHome;
-  const path = copilotCliConfigPath(home);
-  const state = (
-    status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
-    error?: string,
-  ): CopilotCliCredentialResolution => ({
+}
+
+function unresolved(
+  path: string,
+  status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
+  error?: string,
+): CopilotCliCredentialResolution {
+  return {
     status,
     report: {
       source: COPILOT_CLI_SOURCE,
@@ -109,26 +92,82 @@ export async function resolveCopilotCliCredential(
       ...(error ? { error } : {}),
       ...(status === "absent" ? {} : { credentialPresent: true }),
     },
+  };
+}
+
+/**
+ * The local selection phase, and the single owner of whether the native source
+ * could have named an account at all. A platform with no secure store, a
+ * missing config, and a config that selects no account are all structural
+ * silence: they can neither speak for the provider nor stand for a different
+ * selection than a legacy snapshot's.
+ */
+async function selectIdentity(
+  deps: Dependencies,
+): Promise<CopilotCliSelection> {
+  const defaultHome = join(deps.homeDirectory(), ".copilot");
+  const home = deps.environment.COPILOT_HOME || defaultHome;
+  const path = copilotCliConfigPath(home);
+  const blocked = (
+    status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
+    error: string | undefined,
+    silent: boolean,
+  ): CopilotCliSelection => ({
+    kind: "blocked",
+    resolution: unresolved(path, status, error),
+    silent: silent || !secureStoreSupported(deps.platform),
   });
   let raw: Buffer;
   try {
     raw = await deps.readFile(path, FILE_LIMIT);
   } catch (error) {
     return code(error) === "ENOENT"
-      ? state("absent")
-      : state("read_error", "file_read_error");
+      ? blocked("absent", undefined, true)
+      : blocked("read_error", "file_read_error", false);
   }
   if (raw.byteLength > FILE_LIMIT)
-    return state("structurally_invalid", "config_too_large");
+    return blocked("structurally_invalid", "config_too_large", false);
   let identity: Identity | undefined;
   try {
     identity = selectedIdentity(raw);
   } catch {
-    return state("structurally_invalid", "credentials_invalid");
+    return blocked("structurally_invalid", "credentials_invalid", false);
   }
-  if (!identity) return state("unsupported", "selected_account_unconfirmed");
+  if (!identity)
+    return blocked("unsupported", "selected_account_unconfirmed", true);
   if (!secureStoreSupported(deps.platform))
-    return state("unsupported", "secure_store_unsupported");
+    return blocked("unsupported", "secure_store_unsupported", true);
+  return { kind: "identity", identity, path, home, defaultHome };
+}
+
+export async function copilotCliSourceSilent(
+  overrides: Partial<Dependencies> = {},
+): Promise<boolean> {
+  const selection = await selectIdentity(dependencies(overrides));
+  return selection.kind === "blocked" && selection.silent;
+}
+
+/**
+ * Default-profile binding: macOS CLI 1.0.87-0 uses service copilot-cli and
+ * account `${host}:${login}`. Windows CLI 1.0.86 uses a generic credential with
+ * target `${account}.copilot-cli` and username `${account}`. See README for
+ * the empirical validation boundary. Refuse unverified
+ * selectors instead of guessing item names or trying another user's item.
+ * See README's Copilot credential notes for the supported boundary.
+ */
+export async function resolveCopilotCliCredential(
+  options: ProviderOptions,
+  presenceOnly = false,
+  overrides: Partial<Dependencies> = {},
+): Promise<CopilotCliCredentialResolution> {
+  const deps = dependencies(overrides);
+  const selection = await selectIdentity(deps);
+  if (selection.kind === "blocked") return selection.resolution;
+  const { identity, path, home, defaultHome } = selection;
+  const state = (
+    status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
+    error?: string,
+  ): CopilotCliCredentialResolution => unresolved(path, status, error);
   if (resolve(home) !== resolve(defaultHome))
     return state("unsupported", "copilot_home_unsupported");
   // Presence only: never inspect an environment credential's value. A blank
@@ -187,6 +226,8 @@ export async function resolveCopilotCliCredential(
         signal?: unknown;
         code?: unknown;
       } | null;
+      if (failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+        return state("structurally_invalid", "credential_format_unsupported");
       if (failure?.killed || failure?.signal)
         return state("read_error", "keychain_prompt_timeout");
       if (code(error) === 44)

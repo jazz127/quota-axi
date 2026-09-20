@@ -115,22 +115,12 @@ export async function fetchQuota(
   let failure: CopilotFailure | undefined;
   let unavailable: string | undefined;
   let rejected = false;
-  // The native source can only speak for an account when it is able to answer
-  // at all: an absent config, or a platform with no secure store to read.
-  // Every other unsupported reason still names a selected account. It stays
-  // undefined when an earlier source's transport failure ends the search.
-  let nativeSilent: boolean | undefined;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
-    if (source === COPILOT_CLI_SOURCE)
-      nativeSilent =
-        resolution.status === "absent" ||
-        (resolution.status === "unsupported" &&
-          resolution.report.error === "secure_store_unsupported");
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
-      if (source === COPILOT_CLI_SOURCE && !nativeSilent) {
+      if (source === COPILOT_CLI_SOURCE && resolution.status !== "absent") {
         unavailable ??= resolution.report.error ?? "credentials_unavailable";
       }
       continue;
@@ -213,9 +203,12 @@ export async function fetchQuota(
 
   // A definitive rejection is evidence about the account; a native store
   // quota-axi could not read is only evidence about the store. Sign-out wins,
-  // except where the diagnostic carries a remedy the user can act on.
+  // except where the diagnostic carries a remedy the user can act on. A source
+  // that could never have named an account speaks for neither.
+  const nativeSilent = await copilotCliSourceSilent();
   const diagnostic =
     unavailable !== undefined &&
+    !nativeSilent &&
     (!rejected || unavailable === "keychain_prompt_required")
       ? unavailable
       : undefined;
@@ -226,11 +219,7 @@ export async function fetchQuota(
   // profile/account changes. Never serve them as stale, or substitute an older
   // legacy source snapshot for a present but unmeasurable native selection.
   const cached = readCachedProvider("copilot");
-  if (
-    cached &&
-    cached.source !== "cli" &&
-    (nativeSilent ?? (await copilotCliSourceSilent()))
-  ) {
+  if (cached && cached.source !== "cli" && nativeSilent) {
     return staleFromCache(
       cached,
       verdict.error,
