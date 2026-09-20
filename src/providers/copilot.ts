@@ -52,6 +52,7 @@ type CopilotCredentials = {
 
 const APPS_JSON_SOURCE = "apps-json";
 const SIGN_IN_REQUIRED = "GitHub Copilot sign-in required";
+const DECODE_FAILED = "GitHub Copilot quota response could not be decoded";
 
 /**
  * GitHub Copilot's credential stores in ownership-stability order. `apps.json`
@@ -113,19 +114,18 @@ export async function fetchQuota(
   const attempts: SourceAttempt[] = [];
   let failure: CopilotFailure | undefined;
   let unavailable: string | undefined;
-  let nativeAbsent: boolean | undefined;
+  // The native source can only speak for an account when it is able to answer
+  // at all; an absent config and an unsupported platform both leave it silent.
+  let nativeSilent: boolean | undefined;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
     if (source === COPILOT_CLI_SOURCE)
-      nativeAbsent = resolution.status === "absent";
+      nativeSilent =
+        resolution.status === "absent" || resolution.status === "unsupported";
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
-      if (
-        (source === COPILOT_CLI_SOURCE && resolution.status !== "absent") ||
-        (source === GH_CLI_CREDENTIAL_SOURCE &&
-          resolution.status === "unsupported")
-      ) {
+      if (source === COPILOT_CLI_SOURCE && resolution.status !== "absent") {
         unavailable ??= resolution.report.error ?? "credentials_unavailable";
       }
       continue;
@@ -181,9 +181,6 @@ export async function fetchQuota(
     }
 
     if (selection.outcome === "all_rejected") {
-      if (source === COPILOT_CLI_SOURCE)
-        unavailable ??=
-          "GitHub Copilot credential rejected or quota access denied";
       attempts[attempts.length - 1] = {
         source: attemptSource,
         status: "failed",
@@ -216,7 +213,7 @@ export async function fetchQuota(
   if (
     cached &&
     cached.source !== "cli" &&
-    (nativeAbsent ?? (await copilotCliConfigAbsent()))
+    (nativeSilent ?? (await copilotCliConfigAbsent()))
   ) {
     return staleFromCache(
       cached,
@@ -427,7 +424,15 @@ async function fetchCopilotUser(credentials: CopilotCredentials): Promise<{
       signal: controller.signal,
     });
     rejectUnusableUsageResponse(response);
-    const quota = normalizeCopilotUser(await response.json());
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      // A decode failure's message quotes the response body; name the failure
+      // instead of echoing whatever the endpoint returned.
+      throw new Error(DECODE_FAILED);
+    }
+    const quota = normalizeCopilotUser(payload);
     if (!quota) throw new Error("GitHub Copilot quota unavailable");
     return quota;
   } finally {
@@ -652,10 +657,29 @@ function errorMessage(error: unknown): string {
   if (error instanceof RateLimitError) return error.message;
   if (
     error instanceof Error &&
-    /^GitHub Copilot quota unavailable(?: \(\d{3}\))?$/.test(error.message)
+    (error.message === DECODE_FAILED ||
+      /^GitHub Copilot quota unavailable(?: \(\d{3}\))?$/.test(error.message))
   )
     return error.message;
-  return "GitHub Copilot quota request failed";
+  const code = transportFailureCode(error);
+  return code
+    ? `GitHub Copilot quota request failed (${code})`
+    : "GitHub Copilot quota request failed";
+}
+
+/**
+ * A proxy, DNS, or TLS misconfiguration has to stay distinguishable from a
+ * server hiccup, so the failure's own code travels; free-form messages, which
+ * can quote a URL or a response body, do not.
+ */
+function transportFailureCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; current instanceof Error && depth < 3; depth += 1) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Z][A-Z0-9_]*$/.test(code)) return code;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 /** A first-party 401/403: the only probe outcome that is an auth verdict. */

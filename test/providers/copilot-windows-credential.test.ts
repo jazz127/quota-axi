@@ -172,17 +172,27 @@ describe("Copilot Windows selected secure credential", () => {
     "GITHUB_TOKEN",
     "COPILOT_GH_HOST",
     "GH_HOST",
-  ])("refuses %s by presence without reading its value", async (name) => {
+  ])("refuses %s without exposing its value", async (name) => {
     const deps = fixture();
-    Object.defineProperty(deps.environment, name, {
-      get: () => {
-        throw new Error("must not read");
-      },
-    });
-    expect(
-      (await resolveCopilotCliCredential(options, false, deps)).report.error,
-    ).toBe("environment_selection_unsupported");
+    deps.environment[name] = "gho_env_synthetic";
+    const result = await resolveCopilotCliCredential(options, false, deps);
+    expect(result.report.error).toBe("environment_selection_unsupported");
+    expect(JSON.stringify(result)).not.toContain("gho_env_synthetic");
     expect(deps.readWindows).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "COPILOT_GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "COPILOT_GH_HOST",
+    "GH_HOST",
+  ])("lets a blank %s select nothing", async (name) => {
+    const deps = fixture();
+    deps.environment[name] = "";
+    expect(
+      (await resolveCopilotCliCredential(options, false, deps)).status,
+    ).toBe("resolved");
   });
 
   it("refuses unverified custom homes", async () => {

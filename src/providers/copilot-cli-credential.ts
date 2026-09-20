@@ -119,7 +119,8 @@ export async function resolveCopilotCliCredential(
     return state("unsupported", "secure_store_unsupported");
   if (resolve(home) !== resolve(defaultHome))
     return state("unsupported", "copilot_home_unsupported");
-  // Presence only: never inspect an environment credential's value.
+  // Presence only: never inspect an environment credential's value. A blank
+  // value selects nothing, so it preserves the stored path.
   if (
     [
       "COPILOT_GITHUB_TOKEN",
@@ -127,7 +128,7 @@ export async function resolveCopilotCliCredential(
       "GITHUB_TOKEN",
       "COPILOT_GH_HOST",
       "GH_HOST",
-    ].some((name) => Object.hasOwn(deps.environment, name))
+    ].some((name) => (deps.environment[name] ?? "").trim() !== "")
   ) {
     return state("unsupported", "environment_selection_unsupported");
   }
