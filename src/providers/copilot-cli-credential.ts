@@ -25,10 +25,16 @@ function secureStoreSupported(platform: NodeJS.Platform): boolean {
 
 type Identity = { host: string; login: string; account: string };
 export type CopilotCliCredentialResolution =
-  | { status: "resolved"; token: string; report: AuthSourceReport }
+  | {
+      status: "resolved";
+      token: string;
+      report: AuthSourceReport;
+      silent: false;
+    }
   | {
       status: "absent" | "structurally_invalid" | "unsupported" | "read_error";
       report: AuthSourceReport;
+      silent: boolean;
     };
 
 type Dependencies = {
@@ -79,6 +85,7 @@ function unresolved(
 ): CopilotCliCredentialResolution {
   return {
     status,
+    silent,
     report: {
       source: COPILOT_CLI_SOURCE,
       path,
@@ -144,13 +151,6 @@ async function selectIdentity(
   return { kind: "identity", identity, path, home, defaultHome };
 }
 
-export async function copilotCliSourceSilent(
-  overrides: Partial<Dependencies> = {},
-): Promise<boolean> {
-  const selection = await selectIdentity(dependencies(overrides));
-  return selection.kind === "blocked" && selection.silent;
-}
-
 /**
  * Default-profile binding: macOS CLI 1.0.87-0 uses service copilot-cli and
  * account `${host}:${login}`. Windows CLI 1.0.86 uses a generic credential with
@@ -171,7 +171,8 @@ export async function resolveCopilotCliCredential(
   const state = (
     status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
     error?: string,
-  ): CopilotCliCredentialResolution => unresolved(path, status, error);
+  ): CopilotCliCredentialResolution =>
+    unresolved(path, status, error, error === "keychain_prompt_required");
   if (resolve(home) !== resolve(defaultHome))
     return state("unsupported", "copilot_home_unsupported");
   // Presence only: never inspect an environment credential's value. A blank
@@ -268,6 +269,7 @@ export async function resolveCopilotCliCredential(
   return {
     status: "resolved",
     token,
+    silent: false,
     report: {
       source: COPILOT_CLI_SOURCE,
       path,
