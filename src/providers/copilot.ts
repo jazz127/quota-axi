@@ -117,11 +117,13 @@ export async function fetchQuota(
   let unavailable: string | undefined;
   let rejected = false;
   let nativeSilent = false;
+  let nativeResolved = false;
   let nativePromptRequired = false;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
     if (source === COPILOT_CLI_SOURCE) {
+      nativeResolved = true;
       nativeSilent = resolution.silent ?? false;
       nativePromptRequired =
         resolution.report.error === "keychain_prompt_required";
@@ -207,6 +209,17 @@ export async function fetchQuota(
     };
     failure = { error, retryAfter: selection.retryAfter };
     break;
+  }
+
+  if (!nativeResolved) {
+    const resolution = await resolveCopilotCredential(
+      COPILOT_CLI_SOURCE,
+      options,
+    );
+    nativeResolved = true;
+    nativeSilent = resolution.silent ?? false;
+    nativePromptRequired =
+      resolution.report.error === "keychain_prompt_required";
   }
 
   // A definitive rejection is evidence about the account; a native store

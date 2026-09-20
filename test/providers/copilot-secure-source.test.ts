@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchQuota, inspectAuth } from "../../src/providers/copilot.js";
 import {
@@ -109,15 +108,30 @@ describe("Copilot secure-source integration", () => {
       vi.mocked(providerFetch)
         .mockClear()
         .mockRejectedValue(new Error("network failed"));
+      if (config === "selects no account")
+        nativeUnavailable("selected_account_unconfirmed", false);
+      else if (config === "absent")
+        vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
+          status: "absent",
+          silent: true,
+          report: { source: COPILOT_CLI_SOURCE, status: "missing" },
+        });
+      else if (config === "unreadable")
+        vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
+          status: "read_error",
+          silent: false,
+          report: {
+            source: COPILOT_CLI_SOURCE,
+            status: "error",
+            error: "file_read_error",
+          },
+        });
       const result = await fetchQuota(options);
       expect(result.state.stale).toBe(stale);
       expect(result.windows).toEqual(stale ? cached.windows : []);
-      expect(readBoundedFile).toHaveBeenCalledExactlyOnceWith(
-        join("/synthetic/copilot", "config.json"),
-        expect.any(Number),
-      );
+      expect(readBoundedFile).not.toHaveBeenCalled();
       expect(providerFetch).toHaveBeenCalledOnce();
-      expect(resolveCopilotCliCredential).not.toHaveBeenCalled();
+      expect(resolveCopilotCliCredential).toHaveBeenCalledOnce();
       expect(resolveGhCliCredential).not.toHaveBeenCalled();
     },
   );
@@ -132,6 +146,7 @@ describe("Copilot secure-source integration", () => {
     vi.mocked(providerFetch)
       .mockClear()
       .mockRejectedValue(new Error("network failed"));
+    nativeUnavailable("secure_store_unsupported");
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     Object.defineProperty(process, "platform", {
       value: "linux",
