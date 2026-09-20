@@ -2042,6 +2042,34 @@ describe("CLI plumbing via the axi SDK", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("offers the secure-store hint for any keychain diagnostic", async () => {
+    PROVIDERS.claude = {
+      id: "claude",
+      label: "Claude",
+      async fetchQuota() {
+        throw new Error("unexpected quota fetch");
+      },
+      async inspectAuth() {
+        return {
+          provider: "claude" as const,
+          sources: [
+            {
+              source: "keychain",
+              status: "skipped" as const,
+              error: "keychain_access_denied",
+            },
+          ],
+        };
+      },
+    };
+
+    const output = await capture(["--provider", "claude", "auth"]);
+
+    expect(output).toContain(
+      "Run `quota-axi --allow-keychain-prompt auth` to permit native secure-store access",
+    );
+  });
+
   it("frames unknown flags as a validation error with exit code 2", async () => {
     const output = await capture(["--bogus"]);
     expect(output).toContain("unknown argument: --bogus");

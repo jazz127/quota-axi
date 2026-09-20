@@ -60,6 +60,14 @@ describe("bounded Windows generic-password transport", () => {
     [{ code: "ENOENT", stdout: secret }, "credential_read_failed"],
     [{ killed: true, stdout: secret }, "credential_read_timeout"],
     [{ signal: "SIGTERM", stderr: secret }, "credential_read_timeout"],
+    [
+      Object.assign(new Error(secret), {
+        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+        killed: true,
+        stdout: secret,
+      }),
+      "credential_format_unsupported",
+    ],
   ])("never forwards subprocess errors or retries", async (error, reason) => {
     const run = vi.fn().mockRejectedValue(error);
     const result = await readWindowsGenericPassword(binding, {
@@ -77,8 +85,7 @@ describe("bounded Windows generic-password transport", () => {
     "ok\n" + secret + "\0",
     "ok\né",
     "ok\n" + "x".repeat(1281),
-    "x".repeat(16 * 1024 + 1),
-  ])("rejects malformed or oversized bridge values", async (output) => {
+  ])("rejects malformed bridge values", async (output) => {
     const run = vi.fn(async () => output);
     const result = await readWindowsGenericPassword(binding, {
       run,

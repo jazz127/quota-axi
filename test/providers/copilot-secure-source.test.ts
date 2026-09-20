@@ -10,7 +10,6 @@ import { resolveGhCliCredential } from "../../src/providers/gh-cli-credential.js
 import { readJsonFileResult } from "../../src/lib/fs.js";
 import { providerFetch } from "../../src/lib/http.js";
 import { readCachedProvider } from "../../src/cache.js";
-import { renderAuthToon } from "../../src/render.js";
 vi.mock("node:fs/promises", () => ({ lstat: vi.fn() }));
 vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => ({
   ...(await actual<
@@ -170,6 +169,38 @@ describe("Copilot secure-source integration", () => {
     });
   });
 
+  it("still reports sign-in required when the native platform has no secure store", async () => {
+    vi.mocked(readJsonFileResult).mockReturnValue({
+      status: "success",
+      value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+    });
+    nativeUnavailable("secure_store_unsupported");
+    vi.mocked(resolveGhCliCredential).mockResolvedValue({
+      status: "absent",
+      path: "/synthetic/gh",
+    });
+    vi.mocked(providerFetch).mockResolvedValue(response(401));
+    expect((await fetchQuota(options)).state).toMatchObject({
+      status: "auth_required",
+      error: "GitHub Copilot sign-in required",
+    });
+  });
+
+  it("withholds a legacy snapshot when the native source still names an account", async () => {
+    vi.mocked(readJsonFileResult).mockReturnValue({
+      status: "success",
+      value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+    });
+    const cached = await fetchQuota(options);
+    vi.mocked(readJsonFileResult).mockReturnValue({ status: "missing" });
+    vi.mocked(readCachedProvider).mockReturnValue(cached);
+    nativeUnavailable("keychain_prompt_required");
+    vi.mocked(providerFetch).mockClear().mockResolvedValue(response(500));
+    const result = await fetchQuota(options);
+    expect(result.state.stale).toBe(false);
+    expect(result.windows).toEqual([]);
+  });
+
   it("keeps legacy stale cache when the platform has no native secure store", async () => {
     vi.mocked(readJsonFileResult).mockReturnValue({
       status: "success",
@@ -255,9 +286,6 @@ describe("Copilot secure-source integration", () => {
     });
     expect(result.state.remedyCommand).toBeUndefined();
     expect(providerFetch).not.toHaveBeenCalled();
-    expect(
-      renderAuthToon([await inspectAuth(options)], "/bin/quota-axi"),
-    ).not.toContain("--allow-keychain-prompt");
   });
   it("offers a prompt remedy only for a prompt-gated item", async () => {
     nativeUnavailable("keychain_prompt_required");
@@ -269,11 +297,8 @@ describe("Copilot secure-source integration", () => {
       status: "unavailable",
       reason: "keychain_access_required",
     });
-    const auth = await inspectAuth(options);
+    await inspectAuth(options);
     expect(resolveCopilotCliCredential).toHaveBeenLastCalledWith(options, true);
-    expect(renderAuthToon([auth], "/bin/quota-axi")).toContain(
-      "--allow-keychain-prompt",
-    );
   });
   it("does not reuse a native account's cache after source or account change", async () => {
     const cached = await fetchQuota(options);

@@ -82,15 +82,19 @@ export async function readWindowsGenericPassword(
       OUTPUT_LIMIT,
     );
   } catch (error) {
-    const failure = error as { killed?: boolean; signal?: unknown } | null;
+    const failure = error as {
+      code?: unknown;
+      killed?: boolean;
+      signal?: unknown;
+    } | null;
+    if (failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+      return unavailable("credential_format_unsupported");
     return unavailable(
       failure?.killed || failure?.signal
         ? "credential_read_timeout"
         : "credential_read_failed",
     );
   }
-  if (Buffer.byteLength(output) > OUTPUT_LIMIT)
-    return unavailable("credential_format_unsupported");
   // Only the fixed protocol can leave this boundary. In particular, diagnostic
   // text from PowerShell, Add-Type, or a malformed bridge is never forwarded.
   if (output.startsWith("ok\n")) {

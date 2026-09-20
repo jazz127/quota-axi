@@ -114,15 +114,19 @@ export async function fetchQuota(
   const attempts: SourceAttempt[] = [];
   let failure: CopilotFailure | undefined;
   let unavailable: string | undefined;
+  let rejected = false;
   // The native source can only speak for an account when it is able to answer
-  // at all; an absent config and an unsupported platform both leave it silent.
+  // at all: an absent config, or a platform with no secure store to read.
+  // Every other unsupported reason still names a selected account.
   let nativeSilent: boolean | undefined;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
     if (source === COPILOT_CLI_SOURCE)
       nativeSilent =
-        resolution.status === "absent" || resolution.status === "unsupported";
+        resolution.status === "absent" ||
+        (resolution.status === "unsupported" &&
+          resolution.report.error === "secure_store_unsupported");
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
       if (source === COPILOT_CLI_SOURCE && resolution.status !== "absent") {
@@ -181,6 +185,7 @@ export async function fetchQuota(
     }
 
     if (selection.outcome === "all_rejected") {
+      rejected = true;
       attempts[attempts.length - 1] = {
         source: attemptSource,
         status: "failed",
@@ -203,8 +208,16 @@ export async function fetchQuota(
     break;
   }
 
+  // A definitive rejection is evidence about the account; a native store
+  // quota-axi could not read is only evidence about the store. Sign-out wins,
+  // except where the diagnostic carries a remedy the user can act on.
+  const diagnostic =
+    unavailable !== undefined &&
+    (!rejected || unavailable === "keychain_prompt_required")
+      ? unavailable
+      : undefined;
   const verdict: CopilotFailure = failure ?? {
-    error: unavailable ?? SIGN_IN_REQUIRED,
+    error: diagnostic ?? SIGN_IN_REQUIRED,
   };
   // Native snapshots have no established revalidation contract across CLI
   // profile/account changes. Never serve them as stale, or substitute an older
@@ -227,7 +240,7 @@ export async function fetchQuota(
     provider: "copilot",
     label: "GitHub Copilot",
     status:
-      !failure && unavailable
+      !failure && diagnostic
         ? "unavailable"
         : verdict.retryAfter
           ? "rate_limited"
@@ -237,7 +250,7 @@ export async function fetchQuota(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
-  if (!failure && unavailable === "keychain_prompt_required") {
+  if (!failure && diagnostic === "keychain_prompt_required") {
     result.state.reason = "keychain_access_required";
     result.state.remedyCommand =
       "quota-axi --provider copilot --allow-keychain-prompt";
