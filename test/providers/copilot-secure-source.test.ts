@@ -159,7 +159,7 @@ describe("Copilot secure-source integration", () => {
     } finally {
       Object.defineProperty(process, "platform", platform);
     }
-    expect(resolveCopilotCliCredential).not.toHaveBeenCalled();
+    expect(resolveCopilotCliCredential).toHaveBeenCalledOnce();
   });
 
   it("keeps a sibling gh rejection from speaking for the native store", async () => {
@@ -432,7 +432,7 @@ describe("Copilot secure-source integration", () => {
       path: "/synthetic/gh",
     });
     expect((await fetchQuota(options)).state).toMatchObject({
-      status: "unavailable",
+      status: "auth_required",
       reason: "keychain_access_required",
     });
     await inspectAuth(options);
