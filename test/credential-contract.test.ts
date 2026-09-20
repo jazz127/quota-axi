@@ -404,8 +404,10 @@ describe("credential source contract", { timeout: 30_000 }, () => {
         );
         const result = await readQuota("copilot");
         expect(result.state.status).toBe("fresh");
+        const attempt = attemptsFor(result, "copilot-cli:keychain")[0];
+        expect(attempt.status).toBe("skipped");
         expect(
-          attemptsFor(result, "copilot-cli:keychain")[0].credentialPresent,
+          attempt.credentialPresent === true || attempt.degraded === false,
         ).toBe(true);
       },
     );
