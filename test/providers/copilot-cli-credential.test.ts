@@ -180,7 +180,7 @@ describe("Copilot CLI selected Keychain item", () => {
     );
     expect(deps.run).not.toHaveBeenCalled();
   });
-  it.each(["linux", "win32"] as const)(
+  it.each(["linux"] as const)(
     "explicitly reports unsupported %s secure storage",
     async (platform) => {
       const deps = fixture();

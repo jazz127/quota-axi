@@ -8,6 +8,7 @@ import {
   readBoundedFile,
 } from "../lib/fs.js";
 import { execFileText } from "../lib/process.js";
+import { readWindowsGenericPassword } from "../lib/windows-credential.js";
 import type { AuthSourceReport, ProviderOptions } from "../types.js";
 
 export const COPILOT_CLI_SOURCE = "copilot-cli:keychain";
@@ -44,14 +45,16 @@ type Dependencies = {
   homeDirectory: () => string;
   readFile: typeof readBoundedFile;
   run: typeof execFileText;
+  readWindows: typeof readWindowsGenericPassword;
   hasGrant: (path: string, account: string) => boolean;
   recordGrant: (path: string, account: string) => void;
 };
 
 /**
- * Empirically verified on the macOS CLI 1.0.87-0 default profile: selected
- * lastLoggedInUser -> service copilot-cli, account `${host}:${login}`, literal
- * token value. This is not a vendor stability guarantee. Refuse unverified
+ * Default-profile binding: macOS CLI 1.0.87-0 uses service copilot-cli and
+ * account `${host}:${login}`. Windows CLI 1.0.86 uses a generic credential with
+ * target `${account}.copilot-cli` and username `${account}`. See README for
+ * the empirical validation boundary. Refuse unverified
  * selectors instead of guessing item names or trying another user's item.
  * See README's Copilot credential notes for the supported boundary.
  */
@@ -66,6 +69,7 @@ export async function resolveCopilotCliCredential(
     homeDirectory: homedir,
     readFile: readBoundedFile,
     run: execFileText,
+    readWindows: readWindowsGenericPassword,
     hasGrant: (path, account) =>
       existsSync(copilotCliKeychainAccessMarkerPath(path, SERVICE, account)),
     recordGrant,
@@ -111,7 +115,7 @@ export async function resolveCopilotCliCredential(
     return state("structurally_invalid", "credentials_invalid");
   }
   if (!identity) return state("unsupported", "selected_account_unconfirmed");
-  if (deps.platform !== "darwin")
+  if (deps.platform !== "darwin" && deps.platform !== "win32")
     return state("unsupported", "secure_store_unsupported");
   if (resolve(home) !== resolve(defaultHome))
     return state("unsupported", "copilot_home_unsupported");
@@ -129,34 +133,58 @@ export async function resolveCopilotCliCredential(
   }
   if (identity.host !== "https://github.com")
     return state("unsupported", "selected_host_unsupported");
-  const args = ["find-generic-password", "-s", SERVICE, "-a", identity.account];
   const valueAllowed =
     !presenceOnly &&
     (options.allowKeychainPrompt || deps.hasGrant(path, identity.account));
   let value: string;
-  try {
-    value = await deps.run(
-      "/usr/bin/security",
-      valueAllowed ? [...args, "-w"] : args,
-      valueAllowed ? 60_000 : 5_000,
-      TOKEN_LIMIT,
+  if (deps.platform === "win32") {
+    // CredRead returns the secret along with metadata. Until consent is
+    // established, inspect only the CLI's selected identity, never the vault.
+    if (!valueAllowed) return state("unsupported", "keychain_prompt_required");
+    const result = await deps.readWindows(
+      { target: `${identity.account}.${SERVICE}`, username: identity.account },
+      { run: deps.run, systemRoot: deps.environment.SystemRoot },
     );
-  } catch (error) {
-    const failure = error as {
-      killed?: boolean;
-      signal?: unknown;
-      code?: unknown;
-    } | null;
-    if (failure?.killed || failure?.signal)
-      return state("read_error", "keychain_prompt_timeout");
-    if (code(error) === 44)
-      return state("read_error", "keychain_item_unavailable");
-    return state(
-      "read_error",
-      valueAllowed
-        ? "keychain_access_denied"
-        : "keychain_presence_check_failed",
-    );
+    if (result.status !== "resolved")
+      return state(
+        result.reason === "credential_format_unsupported"
+          ? "structurally_invalid"
+          : "read_error",
+        result.reason,
+      );
+    value = result.value;
+  } else {
+    const args = [
+      "find-generic-password",
+      "-s",
+      SERVICE,
+      "-a",
+      identity.account,
+    ];
+    try {
+      value = await deps.run(
+        "/usr/bin/security",
+        valueAllowed ? [...args, "-w"] : args,
+        valueAllowed ? 60_000 : 5_000,
+        TOKEN_LIMIT,
+      );
+    } catch (error) {
+      const failure = error as {
+        killed?: boolean;
+        signal?: unknown;
+        code?: unknown;
+      } | null;
+      if (failure?.killed || failure?.signal)
+        return state("read_error", "keychain_prompt_timeout");
+      if (code(error) === 44)
+        return state("read_error", "keychain_item_unavailable");
+      return state(
+        "read_error",
+        valueAllowed
+          ? "keychain_access_denied"
+          : "keychain_presence_check_failed",
+      );
+    }
   }
   if (!valueAllowed) return state("unsupported", "keychain_prompt_required");
   const token = value.replace(/[\r\n]+$/, "");

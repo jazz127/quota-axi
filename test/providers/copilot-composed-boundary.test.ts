@@ -14,7 +14,11 @@ import { fetchQuota } from "../../src/providers/copilot.js";
 import { execFileText } from "../../src/lib/process.js";
 import { providerFetch } from "../../src/lib/http.js";
 
-const fixture = vi.hoisted(() => ({ home: "", login: "account-a" }));
+const fixture = vi.hoisted(() => ({
+  home: "",
+  login: "account-a",
+  platform: "darwin" as NodeJS.Platform,
+}));
 vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => {
   const native =
     await actual<
@@ -27,7 +31,7 @@ vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => {
       presenceOnly: boolean,
     ) =>
       native.resolveCopilotCliCredential(options, presenceOnly, {
-        platform: "darwin",
+        platform: fixture.platform,
         homeDirectory: () => fixture.home,
       }),
   };
@@ -92,6 +96,7 @@ function resetCalls() {
 }
 
 beforeEach(() => {
+  fixture.platform = "darwin";
   fixture.home = mkdtempSync(join(tmpdir(), "quota-copilot-synthetic-"));
   mkdirSync(join(fixture.home, ".copilot"));
   vi.stubEnv("COPILOT_HOME", join(fixture.home, ".copilot"));
@@ -108,6 +113,12 @@ beforeEach(() => {
     vi.stubEnv(name, undefined);
   select("account-a");
   vi.mocked(execFileText).mockImplementation(async (_file, args) => {
+    if (fixture.platform === "win32") {
+      expect(_file).toBe(
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      );
+      return `ok\n${fixture.login === "account-a" ? tokenA : tokenB}`;
+    }
     expect(args).toContain(`https://github.com:${fixture.login}`);
     return args.includes("-w")
       ? fixture.login === "account-a"
@@ -129,6 +140,85 @@ afterEach(() => {
 });
 
 describe("Copilot composed credential boundaries", () => {
+  it("keeps Windows grants account-scoped and ordinary auth free of vault reads", async () => {
+    fixture.platform = "win32";
+    vi.stubEnv("SystemRoot", "C:\\Windows");
+    expect((await fetchQuota(ordinary)).state.reason).toBe(
+      "keychain_access_required",
+    );
+    expect(execFileText).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
+    expect((await fetchQuota(optIn)).source).toBe("cli");
+    expect(execFileText).toHaveBeenCalledTimes(1);
+    expect(providerFetch).toHaveBeenCalledTimes(1);
+    resetCalls();
+    select("account-b");
+    expect((await fetchQuota(ordinary)).state.reason).toBe(
+      "keychain_access_required",
+    );
+    expect(execFileText).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
+    select("account-a");
+    expect((await fetchQuota(ordinary)).source).toBe("cli");
+    expect(providerFetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: `Bearer ${tokenA}` }),
+      }),
+    );
+    expect(
+      JSON.stringify(storedFiles(join(fixture.home, "cache"))),
+    ).not.toContain(tokenA);
+  });
+
+  it.each([
+    "credential_not_found",
+    "credential_logon_session_unavailable",
+    "credential_binding_mismatch",
+    "credential_read_timeout",
+  ])(
+    "keeps Windows %s unavailable without a false sign-out or HTTP call",
+    async (reason) => {
+      fixture.platform = "win32";
+      vi.stubEnv("SystemRoot", "C:\\Windows");
+      vi.mocked(execFileText).mockImplementation(async () => {
+        if (reason === "credential_read_timeout")
+          throw { killed: true, stdout: tokenA };
+        return reason;
+      });
+      const report = await fetchQuota(optIn);
+      expect(report.state.status).toBe("unavailable");
+      expect(JSON.stringify(report)).not.toContain(tokenA);
+      expect(report.attempts).toContainEqual(
+        expect.objectContaining({
+          source: "copilot-cli:keychain",
+          error: reason,
+        }),
+      );
+      expect(execFileText).toHaveBeenCalledTimes(1);
+      expect(providerFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not hand over from a Windows bearer after a transport failure", async () => {
+    fixture.platform = "win32";
+    vi.stubEnv("SystemRoot", "C:\\Windows");
+    mkdirSync(join(fixture.home, "gh"));
+    writeFileSync(
+      join(fixture.home, "gh/hosts.yml"),
+      `github.com:\n  oauth_token: ${ghToken}\n`,
+    );
+    vi.mocked(providerFetch).mockRejectedValue(new Error("network failure"));
+    const report = await fetchQuota(optIn);
+    expect(report.state.status).toBe("error");
+    expect(providerFetch).toHaveBeenCalledTimes(1);
+    expect(execFileText).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(report)).not.toContain(tokenA);
+    expect(report.attempts).not.toContainEqual(
+      expect.objectContaining({ source: "gh:hosts.yml" }),
+    );
+  });
+
   it("isolates persisted grants across account A/B and reuses only the selected account's grant", async () => {
     expect((await fetchQuota(optIn)).source).toBe("cli");
     resetCalls();

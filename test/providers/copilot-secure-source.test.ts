@@ -207,6 +207,13 @@ describe("Copilot secure-source integration", () => {
     "keychain_access_denied",
     "keychain_prompt_timeout",
     "keychain_item_unavailable",
+    "credential_not_found",
+    "credential_logon_session_unavailable",
+    "credential_access_denied",
+    "credential_binding_mismatch",
+    "credential_format_unsupported",
+    "credential_read_timeout",
+    "credential_read_failed",
   ])("does not call an unmeasured source a sign-out: %s", async (reason) => {
     nativeUnavailable(reason);
     vi.mocked(resolveGhCliCredential).mockResolvedValue({

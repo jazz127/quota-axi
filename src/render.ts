@@ -492,7 +492,7 @@ export function renderAuthToon(
     )
       ? [
           renderHelp([
-            "Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access",
+            "Run `quota-axi --allow-keychain-prompt auth` to permit native secure-store access",
           ]),
         ]
       : []),
