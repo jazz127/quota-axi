@@ -117,11 +117,14 @@ export async function fetchQuota(
   let unavailable: string | undefined;
   let rejected = false;
   let nativeSilent = false;
+  let nativePromptRequired = false;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
     if (source === COPILOT_CLI_SOURCE) {
       nativeSilent = resolution.silent ?? false;
+      nativePromptRequired =
+        resolution.report.error === "keychain_prompt_required";
     }
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
@@ -219,12 +222,13 @@ export async function fetchQuota(
   // legacy source snapshot for a present but unmeasurable native selection.
   const cached = readCachedProvider("copilot");
   if (cached && cached.source !== "cli" && nativeSilent) {
-    return staleFromCache(
+    const result = staleFromCache(
       cached,
       verdict.error,
       sourceNames(attempts),
       attempts,
     );
+    return nativePromptRequired ? withPromptRemedy(result) : result;
   }
 
   const result = failedProvider({
@@ -241,6 +245,13 @@ export async function fetchQuota(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
+  return nativePromptRequired ? withPromptRemedy(result) : result;
+}
+
+function withPromptRemedy(result: ProviderQuota): ProviderQuota {
+  result.state.reason = "keychain_access_required";
+  result.state.remedyCommand =
+    "quota-axi --provider copilot --allow-keychain-prompt";
   return result;
 }
 
