@@ -37,7 +37,6 @@ import {
 
 import {
   COPILOT_CLI_SOURCE,
-  copilotCliSourceSilent,
   resolveCopilotCliCredential,
 } from "./copilot-cli-credential.js";
 
@@ -79,10 +78,12 @@ type CopilotCredentialResolution =
       status: "resolved";
       credentials: CopilotCredentials;
       report: AuthSourceReport;
+      silent?: false;
     }
   | {
       status: "absent" | "structurally_invalid" | "unsupported" | "read_error";
       report: AuthSourceReport;
+      silent?: boolean;
     };
 
 type UnavailableResolution = Exclude<
@@ -115,12 +116,16 @@ export async function fetchQuota(
   let failure: CopilotFailure | undefined;
   let unavailable: string | undefined;
   let rejected = false;
+  let nativeSilent = false;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
+    if (source === COPILOT_CLI_SOURCE) {
+      nativeSilent = resolution.silent ?? false;
+    }
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
-      if (source === COPILOT_CLI_SOURCE && resolution.status !== "absent") {
+      if (source === COPILOT_CLI_SOURCE && !resolution.silent) {
         unavailable ??= resolution.report.error ?? "credentials_unavailable";
       }
       continue;
@@ -202,16 +207,10 @@ export async function fetchQuota(
   }
 
   // A definitive rejection is evidence about the account; a native store
-  // quota-axi could not read is only evidence about the store. Sign-out wins,
-  // except where the diagnostic carries a remedy the user can act on. A source
-  // that could never have named an account speaks for neither.
-  const nativeSilent = await copilotCliSourceSilent();
+  // quota-axi could not read is only evidence about the store. A source that
+  // could never have named an account speaks for neither.
   const diagnostic =
-    unavailable !== undefined &&
-    !nativeSilent &&
-    (!rejected || unavailable === "keychain_prompt_required")
-      ? unavailable
-      : undefined;
+    unavailable !== undefined && !rejected ? unavailable : undefined;
   const verdict: CopilotFailure = failure ?? {
     error: diagnostic ?? SIGN_IN_REQUIRED,
   };
@@ -242,11 +241,6 @@ export async function fetchQuota(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
-  if (!failure && diagnostic === "keychain_prompt_required") {
-    result.state.reason = "keychain_access_required";
-    result.state.remedyCommand =
-      "quota-axi --provider copilot --allow-keychain-prompt";
-  }
   return result;
 }
 
@@ -284,8 +278,9 @@ async function resolveCopilotCredential(
           status: "resolved",
           credentials: { oauthToken: result.token },
           report: result.report,
+          silent: result.silent,
         }
-      : result;
+      : { ...result };
   }
   return fromGhCliResolution(await resolveGhCliCredential());
 }
@@ -300,6 +295,7 @@ function fromGhCliResolution(
         status: "resolved",
         credentials: { oauthToken: resolution.token },
         report: { source: GH_CLI_CREDENTIAL_SOURCE, path, status: "available" },
+        silent: false,
       };
     case "absent":
       return {
@@ -356,7 +352,9 @@ function unavailableAttempt(
       ...(resolution.report.credentialPresent
         ? { credentialPresent: true }
         : {}),
-      ...(resolution.status === "unsupported" ? { degraded: false } : {}),
+      ...(resolution.silent || resolution.status === "unsupported"
+        ? { degraded: false }
+        : {}),
     };
   }
   if (resolution.status === "absent") {
