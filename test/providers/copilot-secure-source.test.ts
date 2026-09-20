@@ -42,14 +42,14 @@ const selectedAccountConfig = Buffer.from(
     lastLoggedInUser: { host: "https://github.com", login: "octocat" },
   }),
 );
-function nativeUnavailable(error: string) {
+function nativeUnavailable(error: string, credentialPresent = true) {
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
     status: "unsupported",
     report: {
       source: COPILOT_CLI_SOURCE,
       status: "skipped",
       error,
-      credentialPresent: true,
+      ...(credentialPresent ? { credentialPresent: true } : {}),
     },
   });
 }
@@ -184,10 +184,14 @@ describe("Copilot secure-source integration", () => {
     });
   });
 
-  it.each(["secure_store_unsupported", "keychain_prompt_required"])(
+  it.each([
+    "secure_store_unsupported",
+    "keychain_prompt_required",
+    "selected_account_unconfirmed",
+  ])(
     "does not call a structural native non-answer degraded: %s",
     async (reason) => {
-      nativeUnavailable(reason);
+      nativeUnavailable(reason, reason !== "selected_account_unconfirmed");
       const result = await fetchQuota(options);
       expect(result.state.status).toBe("fresh");
       expect(degradedSources(result.attempts)).toEqual([]);
