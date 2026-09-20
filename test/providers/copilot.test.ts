@@ -409,6 +409,7 @@ describe("GitHub Copilot credential sources", () => {
         source: "copilot-cli:keychain",
         status: "skipped",
         error: "credentials_missing",
+        degraded: false,
       },
       { source: "gh:hosts.yml", status: "success" },
     ]);
@@ -471,6 +472,7 @@ describe("GitHub Copilot credential sources", () => {
         source: "copilot-cli:keychain",
         status: "skipped",
         error: "credentials_missing",
+        degraded: false,
       },
       {
         source: "gh:hosts.yml",
@@ -505,6 +507,7 @@ describe("GitHub Copilot credential sources", () => {
         source: "copilot-cli:keychain",
         status: "skipped",
         error: "credentials_missing",
+        degraded: false,
       },
       {
         source: "gh:hosts.yml",
