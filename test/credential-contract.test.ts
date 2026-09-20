@@ -150,6 +150,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.doUnmock("../src/lib/process.js");
+  vi.doUnmock("../src/providers/copilot-cli-credential.js");
   vi.resetModules();
   for (const key of ENV_KEYS) {
     const value = originalEnv[key];
@@ -246,6 +247,62 @@ describe("credential source contract", { timeout: 30_000 }, () => {
    * when a sibling source answers.
    */
   describe("copilot", () => {
+    it.each([
+      "credential_not_found",
+      "credential_logon_session_unavailable",
+      "credential_binding_mismatch",
+    ] as const)("keeps Windows %s visible when gh answers", async (reason) => {
+      const dir = join(tempDir, ".copilot");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({
+          lastLoggedInUser: {
+            host: "https://github.com",
+            login: "synthetic-user",
+          },
+        }),
+      );
+      vi.doMock(
+        "../src/providers/copilot-cli-credential.js",
+        async (importOriginal) => {
+          const native =
+            await importOriginal<
+              typeof import("../src/providers/copilot-cli-credential.js")
+            >();
+          return {
+            ...native,
+            resolveCopilotCliCredential: (
+              options: Parameters<typeof native.resolveCopilotCliCredential>[0],
+              presenceOnly: boolean,
+            ) =>
+              native.resolveCopilotCliCredential(options, presenceOnly, {
+                platform: "win32",
+                environment: {},
+                homeDirectory: () => tempDir,
+                hasGrant: () => true,
+                readWindows: async () => ({ status: "unavailable", reason }),
+              }),
+          };
+        },
+      );
+      writeGhHosts("github.com:\n  oauth_token: gho_synthetic\n");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ copilot_plan: "individual" })),
+        ),
+      );
+      const result = await readQuota("copilot");
+      expect(result.state.status).toBe("fresh");
+      expect(attemptsFor(result, "copilot-cli:keychain")[0]).toMatchObject({
+        error: reason,
+        credentialPresent: true,
+      });
+      expect(attemptsFor(result, "gh:hosts.yml")[0].status).toBe("success");
+    });
+
     const copilotSources = [
       "apps-json",
       "copilot-cli:keychain",
