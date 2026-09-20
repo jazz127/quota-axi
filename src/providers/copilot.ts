@@ -56,7 +56,7 @@ const SIGN_IN_REQUIRED = "GitHub Copilot sign-in required";
 /**
  * GitHub Copilot's credential stores in ownership-stability order. `apps.json`
  * is Copilot's legacy store and answers first exactly as it always has. Its
- * native CLI Keychain source is next. The GitHub CLI login belongs to a sibling
+ * native CLI secure-store source is next. The GitHub CLI login belongs to a sibling
  * tool and answers last. Handover is for credential problems only; transport, decoding,
  * rate-limit, or server failure is about the request and stops the search.
  */
