@@ -781,6 +781,17 @@ describe("cards for providers with no combinable bound", () => {
     expect(output).not.toContain("balance · 75 usd remaining");
   });
 
+  it("shows Grok's prepaid balance beside its credits window", () => {
+    const response = fixtureResponse();
+    response.providers[4].credits = { remaining: 12.5, unit: "credits" };
+
+    const output = renderQuotaTui(response, {
+      timeZone: "America/Los_Angeles",
+    });
+
+    expect(output).toContain("balance · 12.5 credits remaining");
+  });
+
   it("renders Cursor's jointly bounded card with its effective bar", () => {
     const cursor = withQuotaSemantics(
       {

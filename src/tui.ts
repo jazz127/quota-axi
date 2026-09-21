@@ -373,7 +373,11 @@ function creditsHeadline(
   if (provider.state.stale || provider.state.status !== "fresh")
     return undefined;
   if (!hasDisplayableCredits(provider)) return undefined;
-  if (provider.windows.some(({ kind }) => kind === "credits")) return undefined;
+  if (
+    provider.provider === "openrouter" &&
+    provider.windows.some(({ id }) => id === "key-limit")
+  )
+    return undefined;
   const credits = provider.credits;
   if (!credits) return undefined;
   const amount =
