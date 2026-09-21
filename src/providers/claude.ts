@@ -624,6 +624,7 @@ async function attemptClaudeQuota(
   let definitiveFailureIsEnv = false;
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
+  let confirmedExpiryFailure: ClaudeFailure | undefined;
   let refreshableExpiredRejected = false;
 
   if (credentialCandidates.length > 0) {
@@ -737,15 +738,24 @@ async function attemptClaudeQuota(
             state.status === "expired" &&
             failure.status === "rate_limited" &&
             (await confirmClaudeStoredExpiry(credential, attempts));
-          if (expiryConfirmed && !transientFailure) {
-            transientFailure = new ClaudeFailure("Claude credential expired", {
-              status: "unavailable",
-              staleEligible: true,
-              ...(state.refreshable
-                ? { authStatus: "expired_refreshable" as const }
-                : {}),
-            }).withUsageFetchFailure();
-            transientFailureIsEnv = credential.source === "env";
+          if (expiryConfirmed) {
+            if (!confirmedExpiryFailure) {
+              confirmedExpiryFailure = new ClaudeFailure(
+                "Claude credential expired",
+                {
+                  status: "unavailable",
+                  staleEligible: true,
+                  ...(state.refreshable
+                    ? { authStatus: "expired_refreshable" as const }
+                    : {}),
+                },
+              ).withUsageFetchFailure();
+              // A confirmed expiry replaces an earlier env transient, as it
+              // did before source-priority tracking was added. Later sibling
+              // confirmations must not replace this first resolved verdict.
+              transientFailure = confirmedExpiryFailure;
+              transientFailureIsEnv = credential.source === "env";
+            }
           } else if (!expiryConfirmed) {
             transientFailure = failure.withUsageFetchFailure();
             transientFailureIsEnv = credential.source === "env";
