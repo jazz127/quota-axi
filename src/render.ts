@@ -293,20 +293,13 @@ function providerStateRows(
   }
   const credits = creditBalance(provider);
   if (credits) {
-    const existing = rows.find((row) => row.kind === "credits");
-    if (existing) {
-      existing.detail += suffix;
-      const index = rows.indexOf(existing);
-      if (index > 0) rows.unshift(rows.splice(index, 1)[0]!);
-    } else {
-      rows.unshift({
-        ...providerColumns(provider),
-        scope: "all",
-        kind: "credits",
-        detail: `${credits}${suffix}`,
-        remedy: provider.state.remedyCommand ?? NONE,
-      });
-    }
+    rows.unshift({
+      ...providerColumns(provider),
+      scope: "all",
+      kind: "credits",
+      detail: `${credits}${suffix}`,
+      remedy: provider.state.remedyCommand ?? NONE,
+    });
     return rows;
   }
   // No status row to carry the auth fact. Emit one when there is an auth
@@ -360,7 +353,7 @@ export function creditWindowMatchesBalance(provider: ProviderQuota): boolean {
       window.spentUsd !== undefined &&
       window.limitUsd !== undefined &&
       Math.abs(window.limitUsd - window.spentUsd - remaining) <=
-        Number.EPSILON * Math.max(1, Math.abs(remaining)),
+        1e-9 * Math.max(1, Math.abs(window.limitUsd)),
   );
 }
 

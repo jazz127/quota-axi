@@ -781,6 +781,42 @@ describe("cards for providers with no combinable bound", () => {
     expect(output).not.toContain("balance · 75 usd remaining");
   });
 
+  it("suppresses a nearly-spent matching OpenRouter cap despite floating-point rounding", () => {
+    const openrouter = withQuotaSemantics(
+      {
+        provider: "openrouter",
+        label: "OpenRouter",
+        source: "api",
+        windows: [
+          {
+            id: "key-limit",
+            label: "Key spend cap",
+            kind: "credits",
+            percentUsed: 99.9,
+            percentRemaining: 0.1,
+            limitUsd: 100,
+            spentUsd: 99.9000000000001,
+          },
+        ],
+        credits: { remaining: 0.1, unit: "usd" },
+        state: {
+          status: "fresh",
+          stale: false,
+          refreshedAt: GENERATED_AT,
+          sourcesTried: ["api"],
+        },
+      },
+      GENERATED_AT,
+    );
+    const output = renderQuotaTui(
+      { generatedAt: GENERATED_AT, schemaVersion: 5, providers: [openrouter] },
+      { timeZone: "America/Los_Angeles" },
+    );
+
+    expect(output).toContain("key sp");
+    expect(output).not.toContain("balance · 0.1 usd remaining");
+  });
+
   it("shows Grok's prepaid balance beside its credits window", () => {
     const response = fixtureResponse();
     response.providers[4].credits = { remaining: 12.5, unit: "credits" };

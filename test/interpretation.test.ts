@@ -332,13 +332,11 @@ describe("quota semantics", () => {
 
   it("treats OpenCode Go rolling, weekly, and monthly windows as stacked plan caps", () => {
     const result = withQuotaSemantics(
-      {
-        ...provider("opencode-go", [
-          window("rolling", "unknown", 90),
-          window("weekly", "weekly", 80),
-          window("monthly", "monthly", 70),
-        ]),
-      },
+      provider("opencode-go", [
+        window("rolling", "unknown", 90),
+        window("weekly", "weekly", 80),
+        window("monthly", "monthly", 70),
+      ]),
       GENERATED_AT,
     );
 
