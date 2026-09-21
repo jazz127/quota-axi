@@ -625,7 +625,6 @@ async function attemptClaudeQuota(
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
   let confirmedExpiryFailure: ClaudeFailure | undefined;
-  let refreshableExpiredRejected = false;
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
@@ -714,7 +713,6 @@ async function attemptClaudeQuota(
           // resolved rejections the highest-priority candidate's verdict
           // wins, whichever class it is: a bystander file must not speak for
           // the session the source order names first.
-          if (softRefreshable) refreshableExpiredRejected = true;
           if (!definitiveFailure) {
             definitiveFailure = failure;
             definitiveFailureIsEnv = credential.source === "env";
@@ -830,7 +828,9 @@ async function attemptClaudeQuota(
   return {
     kind: "failure",
     failure,
-    refreshableExpiredRejected,
+    refreshableExpiredRejected:
+      failure === definitiveFailure &&
+      failure.authStatus === "expired_refreshable",
     keychainWithheld: credentialStates.some(
       (state) =>
         state.status === "skipped" && state.source.source === "keychain",

@@ -1138,6 +1138,25 @@ describe("Claude credential-state reporting", () => {
       }),
     );
     vi.doMock("../../src/lib/process.js", () => ({ execFileText }));
+    vi.doMock("../../src/lib/running-processes.js", () => ({
+      listRunningCommandLines: vi.fn(async () => ({
+        status: "listed" as const,
+        processes: [],
+      })),
+    }));
+    const runRefreshDelegate = vi.fn(async () => ({
+      status: "ran" as const,
+      exitCode: 0,
+    }));
+    vi.doMock(
+      "../../src/providers/delegated-refresh.js",
+      async (original) => ({
+        ...(await original<
+          typeof import("../../src/providers/delegated-refresh.js")
+        >()),
+        runRefreshDelegate,
+      }),
+    );
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 401 })),
@@ -1150,7 +1169,7 @@ describe("Claude credential-state reporting", () => {
     const { fetchQuota } = await import("../../src/providers/claude.js");
     const result = await fetchQuota({
       allowKeychainPrompt: true,
-      refreshCredentials: false,
+      refreshCredentials: true,
     });
 
     expect(result).toMatchObject({
@@ -1176,6 +1195,7 @@ describe("Claude credential-state reporting", () => {
       ]),
     );
     expect(readCachedProvider("claude")).toBeUndefined();
+    expect(runRefreshDelegate).not.toHaveBeenCalled();
   });
 
   describe("refreshable expired credential verdicts", () => {
