@@ -1898,11 +1898,11 @@ describe("default TOON decision blocks", () => {
     },
   );
 
-  it("omits a zero balance beside windows with unknown effective scope", async () => {
+  it("keeps an exhausted OpenRouter key-cap balance beside an unknown scope", async () => {
     useTempCache();
-    PROVIDERS.deepseek = providerWithQuota({
-      provider: "deepseek",
-      label: "DeepSeek",
+    PROVIDERS.openrouter = providerWithQuota({
+      provider: "openrouter",
+      label: "OpenRouter",
       source: "api",
       windows: [
         {
@@ -1916,10 +1916,16 @@ describe("default TOON decision blocks", () => {
     });
 
     const rows = toonRows(
-      await capture(["--provider", "deepseek"]),
+      await capture(["--provider", "openrouter"]),
       "attention",
     );
-    expect(rows.some((row) => row[2] === "credits")).toBe(false);
+    expect(rows).toContainEqual([
+      "openrouter",
+      "all",
+      "credits",
+      "remaining 0 usd",
+      "none",
+    ]);
   });
 
   it("keeps a positive Command Code balance without a contradictory no_quota row", async () => {
