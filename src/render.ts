@@ -296,7 +296,8 @@ function providerStateRows(
     primary.detail += suffix;
     return rows;
   }
-  const credits = provider.windows.length === 0 ? creditBalance(provider) : undefined;
+  const credits =
+    provider.windows.length === 0 ? creditBalance(provider) : undefined;
   if (credits) {
     rows.unshift({
       ...providerColumns(provider),
