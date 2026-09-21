@@ -1832,8 +1832,45 @@ describe("default TOON decision blocks", () => {
         "Grok consumer quota unavailable (auth usable)",
         "none",
       ],
-      ["grok", "all", "credits", "remaining 0 credits", "none"],
     ]);
+  });
+
+  it.each([
+    [12, true],
+    [0, false],
+  ])(
+    "shows only a positive Codex credit balance (%s)",
+    async (remaining, shown) => {
+      useTempCache();
+      PROVIDERS.codex = providerWithQuota({
+        ...freshCodexQuota(),
+        credits: { remaining, unit: "credits" },
+      });
+
+      const rows = toonRows(
+        await capture(["--provider", "codex"]),
+        "attention",
+      );
+      expect(rows.some((row) => row[2] === "credits")).toBe(shown);
+    },
+  );
+
+  it("does not show a cached credit balance in a stale snapshot", async () => {
+    useTempCache();
+    PROVIDERS.grok = providerWithQuota({
+      ...grokModelAuthOnlyQuota(),
+      source: "cache",
+      credits: { remaining: 7, unit: "credits" },
+      state: {
+        ...grokModelAuthOnlyQuota().state,
+        status: "stale",
+        stale: true,
+        refreshedAt: "2026-07-06T18:10:00Z",
+      },
+    });
+
+    const rows = toonRows(await capture(["--provider", "grok"]), "attention");
+    expect(rows.some((row) => row[2] === "credits")).toBe(false);
   });
 
   it("surfaces rate-limit, unresolved, and untrusted facts in attention[]", async () => {

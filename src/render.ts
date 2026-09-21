@@ -271,14 +271,14 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  const credits = creditBalance(provider);
+  const credits = freshCreditBalance(provider);
   if (credits) {
     rows.push({
       ...providerColumns(provider),
       scope: "all",
       kind: "credits",
       detail: `${credits}`,
-      remedy: provider.state.remedyCommand ?? NONE,
+      remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
     });
   }
   if (measured) return rows;
@@ -319,6 +319,21 @@ function creditBalance(provider: ProviderQuota): string | undefined {
   if (credits.unlimited) return "credits unlimited";
   if (credits.remaining === undefined) return undefined;
   return `remaining ${credits.remaining} ${credits.unit ?? "credits"}`;
+}
+
+function freshCreditBalance(provider: ProviderQuota): string | undefined {
+  if (provider.state.stale || provider.state.status !== "fresh")
+    return undefined;
+  if (
+    provider.credits?.unlimited !== true &&
+    !(
+      provider.credits?.remaining !== undefined &&
+      provider.credits.remaining > 0
+    )
+  ) {
+    return undefined;
+  }
+  return creditBalance(provider);
 }
 
 function primaryProviderRow(provider: ProviderQuota): AttentionRow | undefined {

@@ -339,6 +339,9 @@ function creditsOnlyHeadline(
   stale: boolean | undefined,
 ): Line[] | undefined {
   if (provider.windows.length > 0) return undefined;
+  if (provider.state.stale || provider.state.status !== "fresh")
+    return undefined;
+  if (!hasDisplayableCredits(provider)) return undefined;
   const credits = provider.credits;
   if (!credits) return undefined;
   const amount =
@@ -367,6 +370,10 @@ function creditsHeadline(
   stale: boolean | undefined,
 ): Line[] | undefined {
   if (provider.windows.length === 0) return undefined;
+  if (provider.state.stale || provider.state.status !== "fresh")
+    return undefined;
+  if (!hasDisplayableCredits(provider)) return undefined;
+  if (provider.windows.some(({ kind }) => kind === "credits")) return undefined;
   const credits = provider.credits;
   if (!credits) return undefined;
   const amount =
@@ -388,6 +395,14 @@ function creditsHeadline(
       "border",
     ),
   ];
+}
+
+function hasDisplayableCredits(provider: ProviderQuota): boolean {
+  return (
+    provider.credits?.unlimited === true ||
+    (provider.credits?.remaining !== undefined &&
+      provider.credits.remaining > 0)
+  );
 }
 
 /**

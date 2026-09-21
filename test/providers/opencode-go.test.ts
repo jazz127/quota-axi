@@ -3,8 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { withQuotaSemantics } from "../../src/interpretation.js";
-import { renderQuotaToon } from "../../src/render.js";
-import { renderQuotaTui } from "../../src/tui.js";
 import {
   createOpenCodeGoAdapter,
   createPiOpenCodeGoCredentialSource,
@@ -19,7 +17,6 @@ import {
   type NamedOpenCodeGoCredentialSource,
   type OpenCodeGoCredentialSource,
 } from "../../src/providers/opencode-go.js";
-import type { QuotaAxiResponse } from "../../src/types.js";
 
 const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
 const KEY = "synthetic-opencode-go-key-42";
@@ -116,7 +113,6 @@ describe("OpenCode Go provider", () => {
               weekly: { percent: 21, resetsAt: "2026-09-01T00:00:00Z" },
               monthly: { percent: 4, resetsAt: "2026-09-15T00:00:00Z" },
             },
-            balance: { usd: 4.1, currency: "USD" },
           }),
           { status: 200 },
         ),
@@ -145,7 +141,6 @@ describe("OpenCode Go provider", () => {
         { id: "weekly", percentUsed: 21, percentRemaining: 79 },
         { id: "monthly", percentUsed: 4, percentRemaining: 96 },
       ],
-      credits: { remaining: 4.1, unit: "usd" },
       state: { status: "fresh", stale: false },
     });
     expect(JSON.stringify(report)).not.toContain(KEY);
@@ -181,79 +176,6 @@ describe("OpenCode Go provider", () => {
         resetsAt: "2026-10-01T00:00:00.000Z",
       }),
     ]);
-    expect(normalizeOpenCodeGoPayload(payload).credits).toBeUndefined();
-  });
-
-  it("publishes an explicit USD balance without changing plan windows", () => {
-    const payload = JSON.parse(
-      readFileSync("test/fixtures/opencode-go/usage-balance.json", "utf8"),
-    );
-    const normalized = normalizeOpenCodeGoPayload(
-      payload,
-      Date.parse("2026-09-01T00:00:00.000Z"),
-    );
-
-    expect(normalized.credits).toEqual({ remaining: 4.1, unit: "usd" });
-    expect(normalized.windows).toEqual([
-      expect.objectContaining({ id: "five_hour", percentRemaining: 0 }),
-      expect.objectContaining({ id: "weekly", percentRemaining: 0 }),
-      expect.objectContaining({ id: "monthly", percentRemaining: 0 }),
-    ]);
-  });
-
-  it("surfaces balance beside exhausted plan windows in TOON and TUI", () => {
-    const provider = withQuotaSemantics(
-      {
-        provider: "opencode-go",
-        label: "OpenCode Go",
-        source: "api",
-        windows: [
-          {
-            id: "rolling",
-            label: "rolling",
-            kind: "session",
-            percentUsed: 100,
-            percentRemaining: 0,
-          },
-          {
-            id: "weekly",
-            label: "weekly",
-            kind: "weekly",
-            percentUsed: 100,
-            percentRemaining: 0,
-          },
-          {
-            id: "monthly",
-            label: "monthly",
-            kind: "monthly",
-            percentUsed: 100,
-            percentRemaining: 0,
-          },
-        ],
-        credits: { remaining: 4.1, unit: "usd" },
-        state: { status: "fresh", stale: false, sourcesTried: ["api"] },
-      },
-      "2026-09-01T00:00:00.000Z",
-    );
-    const response: QuotaAxiResponse = {
-      generatedAt: "2026-09-01T00:00:00.000Z",
-      providers: [provider],
-    };
-
-    expect(renderQuotaToon(response, "quota-axi", false)).toContain(
-      "opencode-go,all,credits,remaining 4.1 usd",
-    );
-    expect(renderQuotaTui(response, { columns: 100 })).toContain(
-      "balance · 4.1 usd remaining",
-    );
-  });
-
-  it("does not invent credits for absent or non-USD balance data", () => {
-    expect(normalizeOpenCodeGoPayload({ usage: {} }).credits).toBeUndefined();
-    expect(
-      normalizeOpenCodeGoPayload({ balance: { usd: 4.1, currency: "EUR" } })
-        .credits,
-    ).toBeUndefined();
   });
 
   it("accepts remaining percentages and fails safely on rejected or malformed data", async () => {

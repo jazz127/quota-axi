@@ -68,7 +68,6 @@ type Dependencies = {
 export type NormalizedOpenCodeGoPayload = {
   plan?: string;
   windows: QuotaWindow[];
-  credits?: ProviderQuota["credits"];
 };
 
 export function opencodeGoAuthFilePath(): string {
@@ -231,7 +230,6 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
       source: "api",
       ...(normalized.plan ? { plan: normalized.plan } : {}),
       windows: normalized.windows,
-      ...(normalized.credits ? { credits: normalized.credits } : {}),
       refreshedAt: new Date(dependencies.now()).toISOString(),
       sourcesTried: sourceNames(attempts),
       attempts,
@@ -702,29 +700,7 @@ export function normalizeOpenCodeGoPayload(
     .filter((window): window is QuotaWindow => window !== undefined);
   const plan =
     firstString(root, ["planName", "plan_name", "plan"]) ?? "OpenCode Go";
-  const credits = normalizeOpenCodeGoCredits(root);
-  return {
-    plan,
-    windows,
-    ...(credits ? { credits } : {}),
-  };
-}
-
-/**
- * The usage endpoint's public contract does not currently document a balance
- * field. Accept only the explicit USD object shape observed in balance
- * payloads; do not guess at raw integer units or alternate aliases.
- */
-function normalizeOpenCodeGoCredits(
-  root: Record<string, unknown> | undefined,
-): ProviderQuota["credits"] | undefined {
-  const balance = objectValue(root?.balance);
-  if (!balance) return undefined;
-  const usd = numberValue(balance.usd);
-  if (usd === undefined || usd < 0) return undefined;
-  const currency = stringValue(balance.currency)?.toUpperCase();
-  if (currency !== undefined && currency !== "USD") return undefined;
-  return { remaining: usd, unit: "usd" };
+  return { plan, windows };
 }
 
 function normalizeWindow(
