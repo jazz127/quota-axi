@@ -1114,6 +1114,65 @@ describe("Claude credential-state reporting", () => {
     expect(JSON.stringify(result)).not.toContain("refresh-token-presence-only");
   });
 
+  it("retains sign-out when a non-refreshable Keychain token is rejected before a refreshable file token", async () => {
+    usePlatform("darwin");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T20:00:00.000Z"));
+    const home = useTempHome();
+    writeClaudeCredential(home, {
+      accessToken: "expired-file-token",
+      refreshToken: "refresh-token-presence-only",
+      expiresAt: "2000-01-01T00:00:00.000Z",
+    });
+    const execFileText = mockKeychainRead(async () =>
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-keychain-token",
+          expiresAt: "2000-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    vi.doMock("../../src/lib/process.js", () => ({ execFileText }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+
+    const { readCachedProvider, writeCachedProviders } =
+      await import("../../src/cache.js");
+    writeCachedProviders([cachedClaudeQuota(34)]);
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: true,
+      refreshCredentials: false,
+    });
+
+    expect(result).toMatchObject({
+      source: "unavailable",
+      state: {
+        status: "auth_required",
+        stale: false,
+        error: "Claude sign-in required",
+      },
+    });
+    expect(result.attempts).toEqual(
+      expect.arrayContaining([
+        {
+          source: "keychain",
+          status: "failed",
+          error: "Claude sign-in required",
+        },
+        {
+          source: "oauth-file",
+          status: "failed",
+          error: "Claude sign-in required",
+        },
+      ]),
+    );
+    expect(readCachedProvider("claude")).toBeUndefined();
+  });
+
   it("returns fresh quota when an advisory-expired file token still succeeds", async () => {
     const home = useTempHome();
     mkdirSync(join(home, ".claude"), { recursive: true });
