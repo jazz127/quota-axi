@@ -5,6 +5,7 @@ import type {
   QuotaAxiResponse,
   QuotaWindow,
 } from "./types.js";
+import { isOpenRouterKeyLimit } from "./render.js";
 
 /**
  * Human terminal report ("Direction D'"): a two-up card grid with thin
@@ -373,11 +374,7 @@ function creditsHeadline(
   if (provider.state.stale || provider.state.status !== "fresh")
     return undefined;
   if (!hasDisplayableCredits(provider)) return undefined;
-  if (
-    provider.provider === "openrouter" &&
-    provider.windows.some(({ id }) => id === "key-limit")
-  )
-    return undefined;
+  if (isOpenRouterKeyLimit(provider)) return undefined;
   const credits = provider.credits;
   if (!credits) return undefined;
   const amount =

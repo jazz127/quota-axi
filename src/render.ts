@@ -271,7 +271,9 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  const credits = freshCreditBalance(provider);
+  const credits = isOpenRouterKeyLimit(provider)
+    ? undefined
+    : freshCreditBalance(provider);
   if (credits) {
     rows.push({
       ...providerColumns(provider),
@@ -334,6 +336,13 @@ function freshCreditBalance(provider: ProviderQuota): string | undefined {
     return undefined;
   }
   return creditBalance(provider);
+}
+
+export function isOpenRouterKeyLimit(provider: ProviderQuota): boolean {
+  return (
+    provider.provider === "openrouter" &&
+    provider.windows.some(({ id }) => id === "key-limit")
+  );
 }
 
 function primaryProviderRow(provider: ProviderQuota): AttentionRow | undefined {

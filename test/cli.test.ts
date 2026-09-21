@@ -1528,6 +1528,7 @@ describe("new provider public quota output", () => {
 
     const report = await capture(["--provider", "openrouter"]);
     expect(report).toContain("openrouter,all,unresolved_windows,key-limit");
+    expect(report).not.toContain("openrouter,all,credits,");
   });
 
   it("reports both new providers as signed out when no key is present", async () => {
