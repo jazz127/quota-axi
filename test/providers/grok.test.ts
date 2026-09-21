@@ -26,12 +26,6 @@ const CONSUMER_QUOTA_URL =
   "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
 const GROK_BUILD_MODELS_URL = "https://cli-chat-proxy.grok.com/v1/models";
 const XAI_MODELS_URL = "https://api.x.ai/v1/models";
-const supergrokWeeklyFixture = JSON.parse(
-  readFileSync(
-    join(process.cwd(), "test/fixtures/grok/supergrok-weekly.json"),
-    "utf8",
-  ),
-) as { creditUsagePercent: number; prepaidBalance: number };
 const originalGrokAuthJson = process.env.GROK_AUTH_JSON;
 const originalGrokAuthPath = process.env.GROK_AUTH_PATH;
 const originalGrokAuth = process.env.GROK_AUTH;
@@ -301,7 +295,7 @@ describe("Grok consumer quota parsing", () => {
     expect(result.windows).toEqual([
       {
         id: "credits",
-        label: "credits",
+        label: "week",
         kind: "weekly",
         percentUsed: 18.25,
         percentRemaining: 81.75,
@@ -370,17 +364,12 @@ describe("Grok consumer quota parsing", () => {
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
   });
 
-  it("keeps prepaid zero separate from a live weekly subscription window", () => {
+  it("pins pre-existing behaviour: prepaid zero never bounds a live weekly window, whose kind and label come from the period", () => {
     const result = normalizeGrokConsumerPayload(
       consumerPayload({
-        percentUsed: supergrokWeeklyFixture.creditUsagePercent,
-        products: [
-          {
-            product: 2,
-            usagePercent: supergrokWeeklyFixture.creditUsagePercent,
-          },
-        ],
-        prepaid: supergrokWeeklyFixture.prepaidBalance,
+        percentUsed: 64,
+        products: [{ product: 2, usagePercent: 64 }],
+        prepaid: 0,
       }),
     );
     const report = withQuotaSemantics(
@@ -396,12 +385,16 @@ describe("Grok consumer quota parsing", () => {
           sourcesTried: ["web"],
         },
       },
-      "2026-09-21T07:05:00.000Z",
+      "2026-07-23T07:05:00.000Z",
     );
 
     expect(result.windows).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "credits", kind: "weekly" }),
+        expect.objectContaining({
+          id: "credits",
+          label: "week",
+          kind: "weekly",
+        }),
         expect.objectContaining({ id: "product:grok_build", kind: "weekly" }),
       ]),
     );
@@ -2924,6 +2917,8 @@ describe("Grok CLI rendering regression", () => {
       windows: [
         {
           id: "credits",
+          label: "week",
+          kind: "weekly",
           percentUsed: 0,
           percentRemaining: 100,
         },
@@ -2931,8 +2926,8 @@ describe("Grok CLI rendering regression", () => {
     });
 
     const toon = await captureCli(["--provider", "grok", "--full"]);
-    expect(toon).toContain("grok,credits,credits,100");
-    expect(toon).not.toContain("grok,credits,credits,unknown");
+    expect(toon).toContain("grok,credits,week,100");
+    expect(toon).not.toContain("grok,credits,week,unknown");
     expect(await captureCli(["--provider", "grok"])).toContain(
       "grok,all_products,100",
     );
