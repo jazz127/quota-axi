@@ -352,7 +352,9 @@ export function isOpenRouterKeyLimit(provider: ProviderQuota): boolean {
   );
 }
 
-export function isSharedCreditBalanceProvider(provider: ProviderQuota): boolean {
+export function isSharedCreditBalanceProvider(
+  provider: ProviderQuota,
+): boolean {
   return ["codex", "grok", "commandcode", "openrouter"].includes(
     provider.provider,
   );

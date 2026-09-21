@@ -345,7 +345,8 @@ function creditsOnlyHeadline(
   if (provider.windows.length > 0) return undefined;
   if (
     isSharedCreditBalanceProvider(provider) &&
-    (provider.state.stale || provider.state.status !== "fresh" ||
+    (provider.state.stale ||
+      provider.state.status !== "fresh" ||
       !hasDisplayableCredits(provider))
   )
     return undefined;
