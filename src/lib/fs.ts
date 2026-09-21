@@ -113,6 +113,18 @@ export function cursorCliKeychainAccessMarkerPath(account: string): string {
   );
 }
 
+/** Non-secret proof scoped to the exact Copilot config path, service, and account. */
+export function copilotCliKeychainAccessMarkerPath(
+  path: string,
+  service: string,
+  account: string,
+): string {
+  const suffix = createHash("sha256")
+    .update(JSON.stringify([resolve(path), service, account]))
+    .digest("hex");
+  return join(cacheDirPath(), `copilot-cli-keychain-access-granted-${suffix}`);
+}
+
 function cacheDirPath(): string {
   const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   return join(base, "quota-axi");

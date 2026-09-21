@@ -35,6 +35,11 @@ import {
   resolveGhCliCredential,
 } from "./gh-cli-credential.js";
 
+import {
+  COPILOT_CLI_SOURCE,
+  resolveCopilotCliCredential,
+} from "./copilot-cli-credential.js";
+
 const USER_URL = "https://api.github.com/copilot_internal/user";
 const USER_HOST = new URL(USER_URL).hostname;
 const API_TIMEOUT_MS = 15_000;
@@ -46,16 +51,18 @@ type CopilotCredentials = {
 
 const APPS_JSON_SOURCE = "apps-json";
 const SIGN_IN_REQUIRED = "GitHub Copilot sign-in required";
+const DECODE_FAILED = "GitHub Copilot quota response could not be decoded";
 
 /**
  * GitHub Copilot's credential stores in ownership-stability order. `apps.json`
- * is Copilot's own store and answers first exactly as it always has. The GitHub
- * CLI login belongs to a sibling tool, so it is consulted only after
- * `apps.json` cannot answer for a credential reason; a transport, decoding,
+ * is Copilot's legacy store and answers first exactly as it always has. Its
+ * native CLI secure-store source is next. The GitHub CLI login belongs to a sibling
+ * tool and answers last. Handover is for credential problems only; transport, decoding,
  * rate-limit, or server failure is about the request and stops the search.
  */
 const COPILOT_SOURCE_ORDER = [
   APPS_JSON_SOURCE,
+  COPILOT_CLI_SOURCE,
   GH_CLI_CREDENTIAL_SOURCE,
 ] as const;
 
@@ -71,10 +78,12 @@ type CopilotCredentialResolution =
       status: "resolved";
       credentials: CopilotCredentials;
       report: AuthSourceReport;
+      silent?: false;
     }
   | {
       status: "absent" | "structurally_invalid" | "unsupported" | "read_error";
       report: AuthSourceReport;
+      silent?: boolean;
     };
 
 type UnavailableResolution = Exclude<
@@ -101,15 +110,29 @@ export const copilotAdapter: ProviderAdapter = {
 };
 
 export async function fetchQuota(
-  _options: ProviderOptions,
+  options: ProviderOptions,
 ): Promise<ProviderQuota> {
   const attempts: SourceAttempt[] = [];
   let failure: CopilotFailure | undefined;
+  let unavailable: string | undefined;
+  let rejected = false;
+  let nativeSilent = false;
+  let nativeResolved = false;
+  let nativePromptRequired = false;
 
   for (const source of COPILOT_SOURCE_ORDER) {
-    const resolution = await resolveCopilotCredential(source);
+    const resolution = await resolveCopilotCredential(source, options);
+    if (source === COPILOT_CLI_SOURCE) {
+      nativeResolved = true;
+      nativeSilent = resolution.silent ?? false;
+      nativePromptRequired =
+        resolution.report.error === "keychain_prompt_required";
+    }
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
+      if (source === COPILOT_CLI_SOURCE && !resolution.silent) {
+        unavailable ??= resolution.report.error ?? "credentials_unavailable";
+      }
       continue;
     }
 
@@ -152,7 +175,7 @@ export async function fetchQuota(
       return successProvider({
         provider: "copilot",
         label: "GitHub Copilot",
-        source: "api",
+        source: source === COPILOT_CLI_SOURCE ? "cli" : "api",
         plan: quota.plan,
         account: quota.account,
         windows: quota.windows,
@@ -163,10 +186,16 @@ export async function fetchQuota(
     }
 
     if (selection.outcome === "all_rejected") {
+      // A sibling tool's login carries no Copilot entitlement of its own, so
+      // its rejection is not evidence about this provider's account.
+      rejected ||= source !== GH_CLI_CREDENTIAL_SOURCE;
       attempts[attempts.length - 1] = {
         source: attemptSource,
         status: "failed",
-        error: SIGN_IN_REQUIRED,
+        error:
+          source === COPILOT_CLI_SOURCE
+            ? "GitHub Copilot credential rejected or quota access denied"
+            : SIGN_IN_REQUIRED,
       };
       continue;
     }
@@ -182,46 +211,100 @@ export async function fetchQuota(
     break;
   }
 
-  const verdict: CopilotFailure = failure ?? { error: SIGN_IN_REQUIRED };
+  if (!nativeResolved) {
+    const resolution = await resolveCopilotCredential(
+      COPILOT_CLI_SOURCE,
+      options,
+      "silence",
+    );
+    nativeSilent = resolution.silent ?? false;
+    nativePromptRequired =
+      resolution.report.error === "keychain_prompt_required";
+  }
+
+  // A definitive rejection is evidence about the account; a native store
+  // quota-axi could not read is only evidence about the store. A source that
+  // could never have named an account speaks for neither.
+  const diagnostic =
+    unavailable !== undefined && !rejected ? unavailable : undefined;
+  const verdict: CopilotFailure = failure ?? {
+    error: diagnostic ?? SIGN_IN_REQUIRED,
+  };
+  // Native snapshots have no established revalidation contract across CLI
+  // profile/account changes. Never serve them as stale, or substitute an older
+  // legacy source snapshot for a present but unmeasurable native selection.
   const cached = readCachedProvider("copilot");
-  if (cached) {
-    return staleFromCache(
+  if (cached && cached.source !== "cli" && nativeSilent) {
+    const result = staleFromCache(
       cached,
       verdict.error,
       sourceNames(attempts),
       attempts,
     );
+    return nativePromptRequired ? withPromptRemedy(result) : result;
   }
 
-  return failedProvider({
+  const result = failedProvider({
     provider: "copilot",
     label: "GitHub Copilot",
-    status: verdict.retryAfter
-      ? "rate_limited"
-      : statusFromError(verdict.error),
+    status:
+      !failure && diagnostic
+        ? "unavailable"
+        : verdict.retryAfter
+          ? "rate_limited"
+          : statusFromError(verdict.error),
     error: verdict.error,
     retryAfter: verdict.retryAfter,
     sourcesTried: sourceNames(attempts),
     attempts,
   });
+  return nativePromptRequired ? withPromptRemedy(result) : result;
+}
+
+function withPromptRemedy(result: ProviderQuota): ProviderQuota {
+  result.state.reason = "keychain_access_required";
+  result.state.remedyCommand =
+    "quota-axi --provider copilot --allow-keychain-prompt";
+  return result;
 }
 
 export async function inspectAuth(
-  _options: ProviderOptions,
+  options: ProviderOptions,
 ): Promise<AuthProviderReport> {
   const sources: AuthSourceReport[] = [];
   for (const source of COPILOT_SOURCE_ORDER) {
-    sources.push((await resolveCopilotCredential(source)).report);
+    sources.push(
+      (
+        await resolveCopilotCredential(
+          source,
+          options,
+          !options.allowKeychainPrompt,
+        )
+      ).report,
+    );
   }
   return { provider: "copilot", sources };
 }
 
 async function resolveCopilotCredential(
   source: CopilotSource,
+  options: ProviderOptions,
+  presenceOnly: boolean | "silence" = false,
 ): Promise<CopilotCredentialResolution> {
   if (source === APPS_JSON_SOURCE) {
     const authFile = copilotAppsFile();
     return extractCredentialState(readJsonFileResult(authFile), authFile);
+  }
+  if (source === COPILOT_CLI_SOURCE) {
+    const result = await resolveCopilotCliCredential(options, presenceOnly);
+    return result.status === "resolved"
+      ? {
+          status: "resolved",
+          credentials: { oauthToken: result.token },
+          report: result.report,
+          silent: result.silent,
+        }
+      : { ...result };
   }
   return fromGhCliResolution(await resolveGhCliCredential());
 }
@@ -236,6 +319,7 @@ function fromGhCliResolution(
         status: "resolved",
         credentials: { oauthToken: resolution.token },
         report: { source: GH_CLI_CREDENTIAL_SOURCE, path, status: "available" },
+        silent: false,
       };
     case "absent":
       return {
@@ -281,6 +365,22 @@ function unavailableAttempt(
   source: CopilotSource,
   resolution: UnavailableResolution,
 ): SourceAttempt {
+  if (source === COPILOT_CLI_SOURCE) {
+    // An unsupported selection or a consent gate is a structural non-answer
+    // rather than a broken store; the resolver already withholds
+    // `credentialPresent` where no account was selected at all.
+    return {
+      source,
+      status: "skipped",
+      error: resolution.report.error ?? "credentials_missing",
+      ...(resolution.report.credentialPresent
+        ? { credentialPresent: true }
+        : {}),
+      ...(resolution.silent || resolution.status === "unsupported"
+        ? { degraded: false }
+        : {}),
+    };
+  }
   if (resolution.status === "absent") {
     return { source, status: "skipped", error: "credentials_missing" };
   }
@@ -346,6 +446,7 @@ async function fetchCopilotUser(credentials: CopilotCredentials): Promise<{
   const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
     const response = await providerFetch(USER_URL, {
+      redirect: "error",
       headers: {
         authorization: `Bearer ${credentials.oauthToken}`,
         accept: "application/json",
@@ -354,7 +455,15 @@ async function fetchCopilotUser(credentials: CopilotCredentials): Promise<{
       signal: controller.signal,
     });
     rejectUnusableUsageResponse(response);
-    const quota = normalizeCopilotUser(await response.json());
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      // A decode failure's message quotes the response body; name the failure
+      // instead of echoing whatever the endpoint returned.
+      throw new Error(DECODE_FAILED);
+    }
+    const quota = normalizeCopilotUser(payload);
     if (!quota) throw new Error("GitHub Copilot quota unavailable");
     return quota;
   } finally {
@@ -576,9 +685,32 @@ function numberValue(value: unknown): number | undefined {
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.name === "AbortError")
     return "GitHub Copilot quota request timed out";
-  return error instanceof Error
-    ? error.message
-    : "GitHub Copilot quota unavailable";
+  if (error instanceof RateLimitError) return error.message;
+  if (
+    error instanceof Error &&
+    (error.message === DECODE_FAILED ||
+      /^GitHub Copilot quota unavailable(?: \(\d{3}\))?$/.test(error.message))
+  )
+    return error.message;
+  const code = transportFailureCode(error);
+  return code
+    ? `GitHub Copilot quota request failed (${code})`
+    : "GitHub Copilot quota request failed";
+}
+
+/**
+ * A proxy, DNS, or TLS misconfiguration has to stay distinguishable from a
+ * server hiccup, so the failure's own code travels; free-form messages, which
+ * can quote a URL or a response body, do not.
+ */
+function transportFailureCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; current instanceof Error && depth < 3; depth += 1) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Z][A-Z0-9_]*$/.test(code)) return code;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 /** A first-party 401/403: the only probe outcome that is an auth verdict. */

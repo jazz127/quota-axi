@@ -405,6 +405,12 @@ describe("GitHub Copilot credential sources", () => {
     ]);
     expect(result.attempts).toEqual([
       { source: "apps-json", status: "skipped", error: "credentials_missing" },
+      {
+        source: "copilot-cli:keychain",
+        status: "skipped",
+        error: "credentials_missing",
+        degraded: false,
+      },
       { source: "gh:hosts.yml", status: "success" },
     ]);
     expect(degradedSources(result.attempts)).toEqual([]);
@@ -463,6 +469,12 @@ describe("GitHub Copilot credential sources", () => {
     expect(result.attempts).toEqual([
       { source: "apps-json", status: "skipped", error: "credentials_missing" },
       {
+        source: "copilot-cli:keychain",
+        status: "skipped",
+        error: "credentials_missing",
+        degraded: false,
+      },
+      {
         source: "gh:hosts.yml",
         status: "skipped",
         error: "credentials_missing",
@@ -490,6 +502,12 @@ describe("GitHub Copilot credential sources", () => {
         source: "api",
         status: "failed",
         error: "GitHub Copilot sign-in required",
+      },
+      {
+        source: "copilot-cli:keychain",
+        status: "skipped",
+        error: "credentials_missing",
+        degraded: false,
       },
       {
         source: "gh:hosts.yml",
@@ -555,7 +573,7 @@ describe("GitHub Copilot credential sources", () => {
       status: "failed",
       error: "GitHub Copilot sign-in required",
     });
-    expect(result.attempts?.[1]).toMatchObject({
+    expect(result.attempts?.[2]).toMatchObject({
       source: "gh:hosts.yml",
       status: "failed",
       error: result.state.error,
@@ -574,7 +592,7 @@ describe("GitHub Copilot credential sources", () => {
     expect(result.state.status).toBe("auth_required");
     expect(result.state.error).toBe("GitHub Copilot sign-in required");
     expect(api.bearers).toEqual(["Bearer stale-apps-token"]);
-    expect(result.attempts?.[1]).toEqual({
+    expect(result.attempts?.[2]).toEqual({
       source: "gh:hosts.yml",
       status: "skipped",
       error: "credentials_keyring_storage",
@@ -590,7 +608,7 @@ describe("GitHub Copilot credential sources", () => {
 
     expect(result.state.status).toBe("auth_required");
     expect(api.bearers).toEqual([]);
-    expect(result.attempts?.[1]).toEqual({
+    expect(result.attempts?.[2]).toEqual({
       source: "gh:hosts.yml",
       status: "skipped",
       error: "credentials_invalid",
@@ -619,6 +637,11 @@ describe("GitHub Copilot credential sources", () => {
       {
         source: "apps-json",
         path: process.env.GITHUB_COPILOT_APPS_JSON,
+        status: "missing",
+      },
+      {
+        source: "copilot-cli:keychain",
+        path: join(process.env.COPILOT_HOME!, "config.json"),
         status: "missing",
       },
       {

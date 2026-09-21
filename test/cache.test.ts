@@ -276,6 +276,18 @@ describe("quota cache", () => {
     });
   });
 
+  it("never writes a Copilot native snapshot over a servable legacy one", () => {
+    useTempCache();
+    writeCachedProviders([quota("copilot", 18)]);
+
+    writeCachedProviders([{ ...quota("copilot", 55), source: "cli" as const }]);
+
+    expect(readCachedProvider("copilot")).toMatchObject({
+      source: "oauth",
+      windows: [{ percentUsed: 18 }],
+    });
+  });
+
   it("stores Claude cache provenance as an opaque context identifier", () => {
     useTempCache();
     const contextDir = join(tempDir!, "synthetic-claude-context");

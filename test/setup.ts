@@ -23,3 +23,9 @@ process.env.GH_CONFIG_DIR = join(
   tmpdir(),
   `quota-axi-test-no-gh-config-${process.pid}-${randomUUID()}`,
 );
+
+// Native Copilot metadata must never come from the developer's real profile.
+process.env.COPILOT_HOME = join(
+  tmpdir(),
+  `quota-axi-test-no-copilot-config-${process.pid}-${randomUUID()}`,
+);
