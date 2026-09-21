@@ -236,6 +236,8 @@ function buildLiveCard(provider: ProviderQuota, generatedAtMs: number): Card {
   } else {
     lines.push(...effectiveHeadline(provider, headline, stale));
   }
+  const creditsLine = creditsHeadline(provider, stale);
+  if (creditsLine) lines.push(...creditsLine);
 
   if (provider.windows.length > 0) {
     lines.push(interior([], "border"));
@@ -353,6 +355,34 @@ function creditsOnlyHeadline(
         {
           text: stale ? `stale · ${amount}` : amount,
           style: "dimBold",
+        },
+      ],
+      "border",
+    ),
+  ];
+}
+
+function creditsHeadline(
+  provider: ProviderQuota,
+  stale: boolean | undefined,
+): Line[] | undefined {
+  if (provider.windows.length === 0) return undefined;
+  const credits = provider.credits;
+  if (!credits) return undefined;
+  const amount =
+    credits.unlimited === true
+      ? "unlimited"
+      : credits.remaining === undefined
+        ? undefined
+        : `${credits.remaining} ${credits.unit ?? "credits"} remaining`;
+  if (amount === undefined) return undefined;
+  return [
+    interior(
+      [
+        { text: "   " },
+        {
+          text: stale ? `stale · ${amount}` : `balance · ${amount}`,
+          style: "dim",
         },
       ],
       "border",

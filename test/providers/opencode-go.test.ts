@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { withQuotaSemantics } from "../../src/interpretation.js";
+import { renderQuotaToon } from "../../src/render.js";
+import { renderQuotaTui } from "../../src/tui.js";
 import {
   createOpenCodeGoAdapter,
   createPiOpenCodeGoCredentialSource,
@@ -17,6 +19,7 @@ import {
   type NamedOpenCodeGoCredentialSource,
   type OpenCodeGoCredentialSource,
 } from "../../src/providers/opencode-go.js";
+import type { QuotaAxiResponse } from "../../src/types.js";
 
 const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
 const KEY = "synthetic-opencode-go-key-42";
@@ -196,6 +199,50 @@ describe("OpenCode Go provider", () => {
       expect.objectContaining({ id: "weekly", percentRemaining: 0 }),
       expect.objectContaining({ id: "monthly", percentRemaining: 0 }),
     ]);
+  });
+
+  it("surfaces balance beside exhausted plan windows in TOON and TUI", () => {
+    const provider = withQuotaSemantics(
+      {
+        provider: "opencode-go",
+        label: "OpenCode Go",
+        source: "api",
+        windows: [
+          {
+            id: "rolling",
+            kind: "session",
+            percentUsed: 100,
+            percentRemaining: 0,
+          },
+          {
+            id: "weekly",
+            kind: "weekly",
+            percentUsed: 100,
+            percentRemaining: 0,
+          },
+          {
+            id: "monthly",
+            kind: "monthly",
+            percentUsed: 100,
+            percentRemaining: 0,
+          },
+        ],
+        credits: { remaining: 4.1, unit: "usd" },
+        state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+      },
+      "2026-09-01T00:00:00.000Z",
+    );
+    const response: QuotaAxiResponse = {
+      generatedAt: "2026-09-01T00:00:00.000Z",
+      providers: [provider],
+    };
+
+    expect(renderQuotaToon(response, "quota-axi", false)).toContain(
+      "opencode-go,all,credits,remaining 4.1 usd",
+    );
+    expect(renderQuotaTui(response, { columns: 100 })).toContain(
+      "balance · 4.1 usd remaining",
+    );
   });
 
   it("does not invent credits for absent or non-USD balance data", () => {

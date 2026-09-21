@@ -271,6 +271,16 @@ function providerStateRows(
       remedy: NONE,
     });
   }
+  const credits = creditBalance(provider);
+  if (credits) {
+    rows.push({
+      ...providerColumns(provider),
+      scope: "all",
+      kind: "credits",
+      detail: `${credits}`,
+      remedy: provider.state.remedyCommand ?? NONE,
+    });
+  }
   if (measured) return rows;
 
   const authStatus = provider.state.authStatus;
@@ -279,15 +289,9 @@ function providerStateRows(
     primary.detail += suffix;
     return rows;
   }
-  const credits = creditBalance(provider);
   if (credits) {
-    rows.unshift({
-      ...providerColumns(provider),
-      scope: "all",
-      kind: "credits",
-      detail: `${credits}${suffix}`,
-      remedy: provider.state.remedyCommand ?? NONE,
-    });
+    rows[rows.length - 1]!.detail += suffix;
+    rows.unshift(rows.pop()!);
     return rows;
   }
   // No status row to carry the auth fact. Emit one when there is an auth
