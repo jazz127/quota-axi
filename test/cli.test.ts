@@ -1836,6 +1836,20 @@ describe("default TOON decision blocks", () => {
     ]);
   });
 
+  it("does not add shared credit attention for OpenCode Go", async () => {
+    useTempCache();
+    PROVIDERS["opencode-go"] = providerWithQuota({
+      ...freshOpenCodeGoQuota(),
+      credits: { remaining: 4.1, unit: "usd" },
+    });
+
+    const rows = toonRows(
+      await capture(["--provider", "opencode-go"]),
+      "attention",
+    );
+    expect(rows.some((row) => row[2] === "credits")).toBe(false);
+  });
+
   it.each([
     [12, true],
     [0, false],

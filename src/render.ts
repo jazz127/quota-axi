@@ -271,15 +271,17 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  const credits = isOpenRouterKeyLimit(provider)
-    ? undefined
-    : freshCreditBalance(provider);
-  if (credits) {
+  const sharedCredits = isSharedCreditBalanceProvider(provider)
+    ? isOpenRouterKeyLimit(provider)
+      ? undefined
+      : freshCreditBalance(provider)
+    : undefined;
+  if (sharedCredits) {
     rows.push({
       ...providerColumns(provider),
       scope: "all",
       kind: "credits",
-      detail: `${credits}`,
+      detail: `${sharedCredits}`,
       remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
     });
   }
@@ -291,6 +293,11 @@ function providerStateRows(
     primary.detail += suffix;
     return rows;
   }
+  const credits =
+    sharedCredits ??
+    (isSharedCreditBalanceProvider(provider)
+      ? undefined
+      : creditBalance(provider));
   if (credits) {
     rows[rows.length - 1]!.detail += suffix;
     rows.unshift(rows.pop()!);
@@ -342,6 +349,12 @@ export function isOpenRouterKeyLimit(provider: ProviderQuota): boolean {
   return (
     provider.provider === "openrouter" &&
     provider.windows.some(({ id }) => id === "key-limit")
+  );
+}
+
+export function isSharedCreditBalanceProvider(provider: ProviderQuota): boolean {
+  return ["codex", "grok", "commandcode", "openrouter"].includes(
+    provider.provider,
   );
 }
 
