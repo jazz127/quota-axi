@@ -228,9 +228,9 @@ function buildLiveCard(provider: ProviderQuota, generatedAtMs: number): Card {
   ];
 
   const headline = pickHeadlineAvailability(provider);
-  const creditsLine = creditsOnlyHeadline(provider, stale);
-  if (creditsLine) {
-    lines.push(...creditsLine);
+  const creditsOnlyLine = creditsOnlyHeadline(provider, stale);
+  if (creditsOnlyLine) {
+    lines.push(...creditsOnlyLine);
   } else if (hasWhollyUnknownWindowRelationships(provider)) {
     lines.push(...windowsOnlyHeadline(stale));
   } else {

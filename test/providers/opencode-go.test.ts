@@ -210,18 +210,21 @@ describe("OpenCode Go provider", () => {
         windows: [
           {
             id: "rolling",
+            label: "rolling",
             kind: "session",
             percentUsed: 100,
             percentRemaining: 0,
           },
           {
             id: "weekly",
+            label: "weekly",
             kind: "weekly",
             percentUsed: 100,
             percentRemaining: 0,
           },
           {
             id: "monthly",
+            label: "monthly",
             kind: "monthly",
             percentUsed: 100,
             percentRemaining: 0,

@@ -1832,6 +1832,13 @@ describe("default TOON decision blocks", () => {
         "Grok consumer quota unavailable (auth usable)",
         "none",
       ],
+      [
+        "grok",
+        "all",
+        "credits",
+        "remaining 0 credits",
+        "none",
+      ],
     ]);
   });
 
