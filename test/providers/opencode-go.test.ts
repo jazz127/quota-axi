@@ -113,6 +113,7 @@ describe("OpenCode Go provider", () => {
               weekly: { percent: 21, resetsAt: "2026-09-01T00:00:00Z" },
               monthly: { percent: 4, resetsAt: "2026-09-15T00:00:00Z" },
             },
+            balance: { usd: 4.1, currency: "USD" },
           }),
           { status: 200 },
         ),
@@ -141,6 +142,7 @@ describe("OpenCode Go provider", () => {
         { id: "weekly", percentUsed: 21, percentRemaining: 79 },
         { id: "monthly", percentUsed: 4, percentRemaining: 96 },
       ],
+      credits: { remaining: 4.1, unit: "usd" },
       state: { status: "fresh", stale: false },
     });
     expect(JSON.stringify(report)).not.toContain(KEY);
@@ -176,6 +178,32 @@ describe("OpenCode Go provider", () => {
         resetsAt: "2026-10-01T00:00:00.000Z",
       }),
     ]);
+    expect(normalizeOpenCodeGoPayload(payload).credits).toBeUndefined();
+  });
+
+  it("publishes an explicit USD balance without changing plan windows", () => {
+    const payload = JSON.parse(
+      readFileSync("test/fixtures/opencode-go/usage-balance.json", "utf8"),
+    );
+    const normalized = normalizeOpenCodeGoPayload(
+      payload,
+      Date.parse("2026-09-01T00:00:00.000Z"),
+    );
+
+    expect(normalized.credits).toEqual({ remaining: 4.1, unit: "usd" });
+    expect(normalized.windows).toEqual([
+      expect.objectContaining({ id: "five_hour", percentRemaining: 0 }),
+      expect.objectContaining({ id: "weekly", percentRemaining: 0 }),
+      expect.objectContaining({ id: "monthly", percentRemaining: 0 }),
+    ]);
+  });
+
+  it("does not invent credits for absent or non-USD balance data", () => {
+    expect(normalizeOpenCodeGoPayload({ usage: {} }).credits).toBeUndefined();
+    expect(
+      normalizeOpenCodeGoPayload({ balance: { usd: 4.1, currency: "EUR" } })
+        .credits,
+    ).toBeUndefined();
   });
 
   it("accepts remaining percentages and fails safely on rejected or malformed data", async () => {
