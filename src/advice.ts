@@ -234,7 +234,7 @@ function providerHelpLines(provider: ProviderQuota): string[] {
     return [keychainAccessHelpLine(provider)];
   if (hasGrokTokenRefreshAdvice(provider)) return [grokTokenRefreshHelpLine()];
   if (hasClaudeTokenRefreshAdvice(provider))
-    return [claudeTokenRefreshHelpLine()];
+    return [claudeTokenRefreshHelpLine(provider)];
   if (hasClaudeInferenceAdvice(provider)) return [claudeInferenceHelpLine()];
   return [];
 }
@@ -276,7 +276,16 @@ function claudeInferenceHelpLine(): string {
   return `Tell your user: the CLAUDE_CODE_OAUTH_TOKEN session is usable but its token cannot read the quota endpoint. Running \`${CLAUDE_INFERENCE_REMEDY_COMMAND}\` once reads its five-hour and seven-day quota by spending one bounded native Claude Code startup plus a small inference request; quota-axi never does this by default.`;
 }
 
-function claudeTokenRefreshHelpLine(): string {
+function claudeTokenRefreshHelpLine(provider: ProviderQuota): string {
+  const refreshFailure = (provider.attempts ?? []).find(
+    (attempt) =>
+      attempt.source === "claude-cli-refresh" &&
+      (attempt.error === REFRESH_COMMAND_NOT_FOUND ||
+        attempt.error === REFRESH_SPAWN_FAILED),
+  );
+  if (refreshFailure) {
+    return "Tell your user: quota-axi could not run the Claude CLI; run `claude` once where it is installed.";
+  }
   return `Tell your user: run \`${CLAUDE_TOKEN_REFRESH_REMEDY_COMMAND}\` once so Claude Code can refresh its own session token; \`claude doctor\` did not recover it. quota-axi delegates that refresh to the Claude CLI and never rotates credentials itself.`;
 }
 
