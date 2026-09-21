@@ -210,7 +210,7 @@ function providerAttention(
   // Degraded sources are appended, never counted: they name the provider but
   // not why a scope is missing, so they must not suppress the `no_quota` row.
   return [
-    ...providerStateRows(provider, provider.windows.length > 0, scopeRows, hasQuotaRow),
+    ...providerStateRows(provider, measured, scopeRows, hasQuotaRow),
     ...degradedSourceRows(provider),
   ];
 }
@@ -308,7 +308,7 @@ function providerStateRows(
     primary.detail += suffix;
     return rows;
   }
-  const credits = creditBalance(provider);
+  const credits = provider.windows.length === 0 ? creditBalance(provider) : undefined;
   if (credits) {
     rows.unshift({
       ...providerColumns(provider),
