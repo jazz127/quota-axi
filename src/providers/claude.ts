@@ -737,7 +737,7 @@ async function attemptClaudeQuota(
             failure.status === "rate_limited" &&
             (await confirmClaudeStoredExpiry(credential, attempts));
           if (expiryConfirmed) {
-            if (!confirmedExpiryFailure) {
+            if (!confirmedExpiryFailure && !definitiveFailure) {
               confirmedExpiryFailure = new ClaudeFailure(
                 "Claude credential expired",
                 {
