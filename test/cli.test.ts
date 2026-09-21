@@ -1922,6 +1922,42 @@ describe("default TOON decision blocks", () => {
     expect(rows.some((row) => row[2] === "credits")).toBe(false);
   });
 
+  it("keeps a positive Command Code balance without a contradictory no_quota row", async () => {
+    useTempCache();
+    PROVIDERS.commandcode = providerWithQuota({
+      provider: "commandcode",
+      label: "Command Code",
+      source: "api",
+      windows: [{ id: "unknown", label: "unknown", kind: "unknown" }],
+      quotaSemantics: {
+        status: "unknown",
+        effectiveAvailability: [
+          { scope: "all", status: "unknown", boundedBy: [] },
+        ],
+      },
+      credits: { remaining: 12.5, unit: "credits" },
+      state: {
+        status: "fresh",
+        stale: false,
+        authStatus: "usable",
+        sourcesTried: ["api"],
+      },
+    });
+
+    const rows = toonRows(
+      await capture(["--provider", "commandcode"]),
+      "attention",
+    );
+    expect(rows).toContainEqual([
+      "commandcode",
+      "all",
+      "credits",
+      "remaining 12.5 credits (auth usable)",
+      "none",
+    ]);
+    expect(rows.some((row) => row[2] === "no_quota")).toBe(false);
+  });
+
   it.each([
     [12, true],
     [0, false],

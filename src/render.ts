@@ -296,6 +296,11 @@ function providerStateRows(
     primary.detail += suffix;
     return rows;
   }
+  const freshCreditsRow = rows.find((row) => row.kind === "credits");
+  if (freshCreditsRow) {
+    freshCreditsRow.detail += suffix;
+    return rows;
+  }
   const credits =
     provider.windows.length === 0 ? creditBalance(provider) : undefined;
   if (credits) {
