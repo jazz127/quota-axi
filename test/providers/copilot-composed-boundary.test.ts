@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { quotaCommand } from "../../src/commands.js";
+import { writeCachedProviders } from "../../src/cache.js";
 import { fetchQuota } from "../../src/providers/copilot.js";
 import { execFileText } from "../../src/lib/process.js";
 import { providerFetch } from "../../src/lib/http.js";
@@ -140,6 +141,28 @@ afterEach(() => {
 });
 
 describe("Copilot composed credential boundaries", () => {
+  it("never serves another login's snapshot while the selected native account awaits consent", async () => {
+    rmSync(join(fixture.home, ".copilot/config.json"));
+    mkdirSync(join(fixture.home, "gh"));
+    writeFileSync(
+      join(fixture.home, "gh/hosts.yml"),
+      `github.com:\n  oauth_token: ${ghToken}\n`,
+    );
+    const earlier = await fetchQuota(ordinary);
+    expect(earlier.state.status).toBe("fresh");
+    writeCachedProviders([earlier]);
+
+    select("account-b");
+    vi.mocked(providerFetch).mockResolvedValue(response(500));
+    const report = await fetchQuota(ordinary);
+    expect(report.state).toMatchObject({
+      stale: false,
+      reason: "keychain_access_required",
+    });
+    expect(report.windows).toEqual([]);
+    expect(vi.mocked(execFileText).mock.calls[0][1]).not.toContain("-w");
+  });
+
   it.each(["darwin", "win32"] as const)(
     "never reads a %s native secret it cannot use after a transient apps.json failure",
     async (platform) => {

@@ -326,8 +326,9 @@ describe("Copilot secure-source integration", () => {
     nativeUnavailable("keychain_prompt_required");
     vi.mocked(providerFetch).mockClear().mockResolvedValue(response(500));
     const result = await fetchQuota(options);
-    expect(result.state.stale).toBe(true);
-    expect(result.windows).toEqual(cached.windows);
+    expect(result.state.stale).toBe(false);
+    expect(result.windows).toEqual([]);
+    expect(result.state.reason).toBe("keychain_access_required");
   });
 
   it("keeps legacy stale cache when the platform has no native secure store", async () => {
@@ -431,7 +432,8 @@ describe("Copilot secure-source integration", () => {
       path: "/synthetic/gh",
     });
     expect((await fetchQuota(options)).state).toMatchObject({
-      status: "auth_required",
+      status: "unavailable",
+      error: "keychain_prompt_required",
       reason: "keychain_access_required",
     });
     await inspectAuth(options);

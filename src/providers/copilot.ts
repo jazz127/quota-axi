@@ -130,7 +130,13 @@ export async function fetchQuota(
     }
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
-      if (source === COPILOT_CLI_SOURCE && !resolution.silent) {
+      // An item awaiting consent still names an account, so it speaks for the
+      // verdict (unmeasured, not signed out) without counting as degraded.
+      if (
+        source === COPILOT_CLI_SOURCE &&
+        (!resolution.silent ||
+          resolution.report.error === "keychain_prompt_required")
+      ) {
         unavailable ??= resolution.report.error ?? "credentials_unavailable";
       }
       continue;
@@ -234,7 +240,12 @@ export async function fetchQuota(
   // profile/account changes. Never serve them as stale, or substitute an older
   // legacy source snapshot for a present but unmeasurable native selection.
   const cached = readCachedProvider("copilot");
-  if (cached && cached.source !== "cli" && nativeSilent) {
+  if (
+    cached &&
+    cached.source !== "cli" &&
+    nativeSilent &&
+    !nativePromptRequired
+  ) {
     const result = staleFromCache(
       cached,
       verdict.error,
