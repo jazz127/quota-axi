@@ -1528,7 +1528,7 @@ describe("new provider public quota output", () => {
 
     const report = await capture(["--provider", "openrouter"]);
     expect(report).toContain("openrouter,all,unresolved_windows,key-limit");
-    expect(report).not.toContain("openrouter,all,credits,");
+    expect(report).toContain("openrouter,all,credits,remaining 73.25 usd");
   });
 
   it("reports both new providers as signed out when no key is present", async () => {
@@ -1836,19 +1836,67 @@ describe("default TOON decision blocks", () => {
     ]);
   });
 
-  it("does not add shared credit attention for OpenCode Go", async () => {
-    useTempCache();
-    PROVIDERS["opencode-go"] = providerWithQuota({
-      ...freshOpenCodeGoQuota(),
-      credits: { remaining: 4.1, unit: "usd" },
-    });
+  it.each([
+    ["deepseek", "DeepSeek", "usd", 12.5],
+    ["minimax", "MiniMax", "usd", 8.25],
+  ])(
+    "reports a fresh %s credits-only balance without throwing",
+    async (provider, label, unit, remaining) => {
+      useTempCache();
+      const providerId = provider as "deepseek" | "minimax";
+      PROVIDERS[providerId] = providerWithQuota({
+        provider: providerId,
+        label,
+        source: "api",
+        windows: [],
+        credits: { remaining, unit },
+        state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+      });
 
-    const rows = toonRows(
-      await capture(["--provider", "opencode-go"]),
-      "attention",
-    );
-    expect(rows.some((row) => row[2] === "credits")).toBe(false);
-  });
+      const rows = toonRows(
+        await capture(["--provider", provider]),
+        "attention",
+      );
+      expect(rows).toContainEqual([
+        provider,
+        "all",
+        "credits",
+        `remaining ${remaining} ${unit}`,
+        "none",
+      ]);
+    },
+  );
+
+  it.each([
+    ["commandcode", "Command Code", "credits"],
+    ["openrouter", "OpenRouter", "usd"],
+  ])(
+    "keeps a fresh zero %s credits-only balance visible",
+    async (provider, label, unit) => {
+      useTempCache();
+      const providerId = provider as "commandcode" | "openrouter";
+      PROVIDERS[providerId] = providerWithQuota({
+        provider: providerId,
+        label,
+        source: "api",
+        windows: [],
+        credits: { remaining: 0, unit },
+        state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+      });
+
+      const rows = toonRows(
+        await capture(["--provider", provider]),
+        "attention",
+      );
+      expect(rows).toContainEqual([
+        provider,
+        "all",
+        "credits",
+        `remaining 0 ${unit}`,
+        "none",
+      ]);
+    },
+  );
 
   it.each([
     [12, true],

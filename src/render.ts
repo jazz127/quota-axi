@@ -271,21 +271,19 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  const sharedCredits = isSharedCreditBalanceProvider(provider)
-    ? isOpenRouterKeyLimit(provider)
-      ? undefined
-      : freshCreditBalance(provider)
-    : undefined;
-  if (sharedCredits) {
-    rows.push({
-      ...providerColumns(provider),
-      scope: "all",
-      kind: "credits",
-      detail: `${sharedCredits}`,
-      remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
-    });
+  if (measured) {
+    const credits = freshCreditBalance(provider);
+    if (credits) {
+      rows.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "credits",
+        detail: `${credits}`,
+        remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
+      });
+    }
+    return rows;
   }
-  if (measured) return rows;
 
   const authStatus = provider.state.authStatus;
   const suffix = authStatus ? ` (auth ${authStatus})` : "";
@@ -293,14 +291,22 @@ function providerStateRows(
     primary.detail += suffix;
     return rows;
   }
-  const credits =
-    sharedCredits ??
-    (isSharedCreditBalanceProvider(provider)
-      ? undefined
-      : creditBalance(provider));
+  const credits = creditBalance(provider);
   if (credits) {
-    rows[rows.length - 1]!.detail += suffix;
-    rows.unshift(rows.pop()!);
+    const existing = rows.find((row) => row.kind === "credits");
+    if (existing) {
+      existing.detail += suffix;
+      const index = rows.indexOf(existing);
+      if (index > 0) rows.unshift(rows.splice(index, 1)[0]!);
+    } else {
+      rows.unshift({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "credits",
+        detail: `${credits}${suffix}`,
+        remedy: provider.state.remedyCommand ?? NONE,
+      });
+    }
     return rows;
   }
   // No status row to carry the auth fact. Emit one when there is an auth
@@ -345,18 +351,14 @@ function freshCreditBalance(provider: ProviderQuota): string | undefined {
   return creditBalance(provider);
 }
 
-export function isOpenRouterKeyLimit(provider: ProviderQuota): boolean {
-  return (
-    provider.provider === "openrouter" &&
-    provider.windows.some(({ id }) => id === "key-limit")
-  );
-}
-
-export function isSharedCreditBalanceProvider(
-  provider: ProviderQuota,
-): boolean {
-  return ["codex", "grok", "commandcode", "openrouter"].includes(
-    provider.provider,
+export function creditWindowMatchesBalance(provider: ProviderQuota): boolean {
+  const remaining = provider.credits?.remaining;
+  if (remaining === undefined) return false;
+  return provider.windows.some(
+    (window) =>
+      window.kind === "credits" &&
+      window.percentRemaining !== undefined &&
+      Math.abs(window.percentRemaining - remaining) < Number.EPSILON,
   );
 }
 

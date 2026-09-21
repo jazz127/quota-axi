@@ -5,10 +5,7 @@ import type {
   QuotaAxiResponse,
   QuotaWindow,
 } from "./types.js";
-import {
-  isOpenRouterKeyLimit,
-  isSharedCreditBalanceProvider,
-} from "./render.js";
+import { creditWindowMatchesBalance } from "./render.js";
 
 /**
  * Human terminal report ("Direction D'"): a two-up card grid with thin
@@ -343,13 +340,6 @@ function creditsOnlyHeadline(
   stale: boolean | undefined,
 ): Line[] | undefined {
   if (provider.windows.length > 0) return undefined;
-  if (
-    isSharedCreditBalanceProvider(provider) &&
-    (provider.state.stale ||
-      provider.state.status !== "fresh" ||
-      !hasDisplayableCredits(provider))
-  )
-    return undefined;
   const credits = provider.credits;
   if (!credits) return undefined;
   const amount =
@@ -378,11 +368,10 @@ function creditsHeadline(
   stale: boolean | undefined,
 ): Line[] | undefined {
   if (provider.windows.length === 0) return undefined;
-  if (!isSharedCreditBalanceProvider(provider)) return undefined;
   if (provider.state.stale || provider.state.status !== "fresh")
     return undefined;
   if (!hasDisplayableCredits(provider)) return undefined;
-  if (isOpenRouterKeyLimit(provider)) return undefined;
+  if (creditWindowMatchesBalance(provider)) return undefined;
   const credits = provider.credits;
   if (!credits) return undefined;
   const amount =

@@ -338,7 +338,6 @@ describe("quota semantics", () => {
           window("weekly", "weekly", 80),
           window("monthly", "monthly", 70),
         ]),
-        credits: { remaining: 4.1, unit: "usd" },
       },
       GENERATED_AT,
     );
