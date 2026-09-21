@@ -271,7 +271,10 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  if (measured) {
+  // A provider may have windows without a measurable effective percentage.
+  // Surface only fresh positive/unlimited credits beside those facts; zero
+  // balances remain suppressed so they cannot imply a measured quota.
+  if (provider.windows.length > 0) {
     const credits = freshCreditBalance(provider);
     if (credits) {
       rows.push({
@@ -282,6 +285,8 @@ function providerStateRows(
         remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
       });
     }
+  }
+  if (measured) {
     return rows;
   }
 
