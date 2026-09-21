@@ -1898,6 +1898,30 @@ describe("default TOON decision blocks", () => {
     },
   );
 
+  it("omits a zero balance beside windows with unknown effective scope", async () => {
+    useTempCache();
+    PROVIDERS.deepseek = providerWithQuota({
+      provider: "deepseek",
+      label: "DeepSeek",
+      source: "api",
+      windows: [
+        {
+          id: "unfamiliar",
+          label: "unfamiliar",
+          kind: "unknown",
+        },
+      ],
+      credits: { remaining: 0, unit: "usd" },
+      state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+    });
+
+    const rows = toonRows(
+      await capture(["--provider", "deepseek"]),
+      "attention",
+    );
+    expect(rows.some((row) => row[2] === "credits")).toBe(false);
+  });
+
   it.each([
     [12, true],
     [0, false],
