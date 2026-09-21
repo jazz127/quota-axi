@@ -1148,15 +1148,12 @@ describe("Claude credential-state reporting", () => {
       status: "ran" as const,
       exitCode: 0,
     }));
-    vi.doMock(
-      "../../src/providers/delegated-refresh.js",
-      async (original) => ({
-        ...(await original<
-          typeof import("../../src/providers/delegated-refresh.js")
-        >()),
-        runRefreshDelegate,
-      }),
-    );
+    vi.doMock("../../src/providers/delegated-refresh.js", async (original) => ({
+      ...(await original<
+        typeof import("../../src/providers/delegated-refresh.js")
+      >()),
+      runRefreshDelegate,
+    }));
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 401 })),
