@@ -308,10 +308,10 @@ function providerStateRows(
 }
 
 /**
- * A provider that reports a raw credit balance but no measurable scope has a
- * real number to state. Naming it keeps the default report from contradicting
- * the same run's `credits` with a bare `no_quota`, without inventing a
- * percentage or a routing bound from a balance that has no cap.
+ * A provider that reports a raw credit balance has a real number to state.
+ * Naming it keeps the default report from hiding that evidence beside either
+ * measurable or absent scopes, without inventing a percentage or a routing
+ * bound from a balance that has no cap.
  */
 function creditBalance(provider: ProviderQuota): string | undefined {
   const credits = provider.credits;
