@@ -357,8 +357,10 @@ export function creditWindowMatchesBalance(provider: ProviderQuota): boolean {
   return provider.windows.some(
     (window) =>
       window.kind === "credits" &&
-      window.percentRemaining !== undefined &&
-      Math.abs(window.percentRemaining - remaining) < Number.EPSILON,
+      window.spentUsd !== undefined &&
+      window.limitUsd !== undefined &&
+      Math.abs(window.limitUsd - window.spentUsd - remaining) <=
+        Number.EPSILON * Math.max(1, Math.abs(remaining)),
   );
 }
 
