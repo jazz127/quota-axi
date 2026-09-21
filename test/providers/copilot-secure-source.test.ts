@@ -298,6 +298,24 @@ describe("Copilot secure-source integration", () => {
     });
   });
 
+  it("preserves a native local failure after a rejected apps token", async () => {
+    vi.mocked(readJsonFileResult).mockReturnValue({
+      status: "success",
+      value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+    });
+    nativeUnavailable("keychain_item_unavailable");
+    vi.mocked(resolveGhCliCredential).mockResolvedValue({
+      status: "absent",
+      path: "/synthetic/gh",
+    });
+    vi.mocked(providerFetch).mockResolvedValue(response(401));
+
+    expect((await fetchQuota(options)).state).toMatchObject({
+      status: "unavailable",
+      error: "keychain_item_unavailable",
+    });
+  });
+
   it("still reports sign-in required when the native platform has no secure store", async () => {
     vi.mocked(readJsonFileResult).mockReturnValue({
       status: "success",

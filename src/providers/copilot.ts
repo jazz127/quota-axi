@@ -115,7 +115,6 @@ export async function fetchQuota(
   const attempts: SourceAttempt[] = [];
   let failure: CopilotFailure | undefined;
   let unavailable: string | undefined;
-  let rejected = false;
   let nativeSilent = false;
   let nativeResolved = false;
   let nativePromptRequired = false;
@@ -192,9 +191,6 @@ export async function fetchQuota(
     }
 
     if (selection.outcome === "all_rejected") {
-      // A sibling tool's login carries no Copilot entitlement of its own, so
-      // its rejection is not evidence about this provider's account.
-      rejected ||= source !== GH_CLI_CREDENTIAL_SOURCE;
       attempts[attempts.length - 1] = {
         source: attemptSource,
         status: "failed",
@@ -228,11 +224,7 @@ export async function fetchQuota(
       resolution.report.error === "keychain_prompt_required";
   }
 
-  // A definitive rejection is evidence about the account; a native store
-  // quota-axi could not read is only evidence about the store. A source that
-  // could never have named an account speaks for neither.
-  const diagnostic =
-    unavailable !== undefined && !rejected ? unavailable : undefined;
+  const diagnostic = unavailable;
   const verdict: CopilotFailure = failure ?? {
     error: diagnostic ?? SIGN_IN_REQUIRED,
   };
