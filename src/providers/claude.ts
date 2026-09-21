@@ -238,7 +238,7 @@ export async function fetchQuota(
       const run = await runRefreshDelegate(CLAUDE_CLI_REFRESH_DELEGATE);
       attempts.push(refreshDelegateAttempt(CLAUDE_CLI_REFRESH_DELEGATE, run));
       if (run.status === "ran") {
-        const retry = await attemptClaudeQuota(options, attempts, true);
+        const retry = await attemptClaudeQuota(options, attempts);
         if (retry.kind === "success") return retry.report;
         pass = retry;
       } else if (run.status === "unconfirmed") {
@@ -526,26 +526,6 @@ function refreshableExpiryFailure(): ClaudeFailure {
 }
 
 /**
- * Rejected soft expiry is `expired_refreshable` only while no delegated
- * rotation has genuinely run. Once `claude doctor` ran and the same stored
- * refreshable token is rejected again, the vendor's own rotation failed, which
- * is the strongest sign-out evidence quota-axi has, so it keeps the
- * `auth_required` verdict it published before soft expiry existed.
- */
-function isSoftRefreshableRejection(
-  failure: ClaudeFailure,
-  state: AvailableCredentialState | AdvisoryExpiredCredentialState,
-  afterDelegatedRefresh: boolean,
-): boolean {
-  return (
-    !afterDelegatedRefresh &&
-    failure.definitiveAuth &&
-    state.status === "expired" &&
-    state.refreshable
-  );
-}
-
-/**
  * The vendor outran the wait and was left running, so quota-axi does not know
  * what the credential store now holds. It refuses to turn that into a sign-out
  * verdict: the report is an unmeasured provider (stale cache when one applies),
@@ -585,7 +565,6 @@ async function confirmClaudeStoredExpiry(
 async function attemptClaudeQuota(
   options: ProviderOptions,
   attempts: SourceAttempt[],
-  afterDelegatedRefresh = false,
 ): Promise<ClaudeQuotaPass> {
   const credentialStates = await readCredentialStates(options);
   const credentialCandidates = credentialStates
@@ -674,11 +653,10 @@ async function attemptClaudeQuota(
         };
       } catch (error) {
         let failure = claudeFailureFor(error);
-        const softRefreshable = isSoftRefreshableRejection(
-          failure,
-          state,
-          afterDelegatedRefresh,
-        );
+        const softRefreshable =
+          failure.definitiveAuth &&
+          state.status === "expired" &&
+          state.refreshable;
         if (softRefreshable) failure = refreshableExpiryFailure();
         attempts[attempts.length - 1] = {
           source: credential.source,

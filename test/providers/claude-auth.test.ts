@@ -1309,7 +1309,9 @@ describe("Claude credential-state reporting", () => {
       });
     });
 
-    it("publishes auth_required and retires the cache when the delegated refresh ran and the same token is still rejected", async () => {
+    it("keeps the soft verdict, cache and a claude remedy when the delegated refresh ran and the same token is still rejected", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-06T20:00:00.000Z"));
       const home = useTempHome();
       writeClaudeCredential(home, {
         accessToken: "expired-token",
@@ -1343,11 +1345,55 @@ describe("Claude credential-state reporting", () => {
         allowKeychainPrompt: false,
         refreshCredentials: true,
       });
+      const annotated = annotateQuotaAdvice({
+        generatedAt: "2026-07-06T20:00:00.000Z",
+        providers: [result],
+      });
 
       expect(runRefreshDelegate).toHaveBeenCalledTimes(1);
-      expect(result.state.status).toBe("auth_required");
-      expect(result.state.authStatus).toBeUndefined();
-      expect(readCached("claude")).toBeUndefined();
+      expect(annotated.providers[0]?.state).toMatchObject({
+        status: "stale",
+        error: "Claude access token expired",
+        authStatus: "expired_refreshable",
+        reason: "credentials_expired",
+        remedyCommand: "claude",
+      });
+      expect(annotated.help?.join("\n")).toContain("`claude`");
+      expect(readCached("claude")).toBeDefined();
+    });
+
+    it("offers no claude remedy while Claude Code is running and owns the refresh", async () => {
+      const home = useTempHome();
+      writeClaudeCredential(home, {
+        accessToken: "expired-token",
+        refreshToken: "refresh-token-presence-only",
+        expiresAt: expired,
+      });
+      reject401();
+      vi.doMock("../../src/lib/running-processes.js", () => ({
+        listRunningCommandLines: vi.fn(async () => ({
+          status: "listed" as const,
+          processes: [
+            { pid: process.pid + 1, commandLine: "/usr/local/bin/claude" },
+          ],
+        })),
+      }));
+
+      const { fetchQuota } = await import("../../src/providers/claude.js");
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: true,
+      });
+      const annotated = annotateQuotaAdvice({
+        generatedAt: "2026-07-06T20:00:00.000Z",
+        providers: [result],
+      });
+
+      expect(annotated.providers[0]?.state.authStatus).toBe(
+        "expired_refreshable",
+      );
+      expect(annotated.providers[0]?.state.remedyCommand).toBeUndefined();
+      expect(annotated.help).toBeUndefined();
     });
 
     it.each([
