@@ -737,16 +737,19 @@ async function attemptClaudeQuota(
             state.status === "expired" &&
             failure.status === "rate_limited" &&
             (await confirmClaudeStoredExpiry(credential, attempts));
-          transientFailure = expiryConfirmed
-            ? new ClaudeFailure("Claude credential expired", {
-                status: "unavailable",
-                staleEligible: true,
-                ...(state.refreshable
-                  ? { authStatus: "expired_refreshable" as const }
-                  : {}),
-              }).withUsageFetchFailure()
-            : failure.withUsageFetchFailure();
-          transientFailureIsEnv = credential.source === "env";
+          if (expiryConfirmed && !transientFailure) {
+            transientFailure = new ClaudeFailure("Claude credential expired", {
+              status: "unavailable",
+              staleEligible: true,
+              ...(state.refreshable
+                ? { authStatus: "expired_refreshable" as const }
+                : {}),
+            }).withUsageFetchFailure();
+            transientFailureIsEnv = credential.source === "env";
+          } else if (!expiryConfirmed) {
+            transientFailure = failure.withUsageFetchFailure();
+            transientFailureIsEnv = credential.source === "env";
+          }
           // The env token is an independent source the vendor merely resolves
           // first; its non-definitive failure must not withhold a still-untried
           // stored source. An unresolved (transient) failure from a stored

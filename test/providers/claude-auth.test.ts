@@ -1513,6 +1513,54 @@ describe("Claude credential-state reporting", () => {
       expect(result.state.error).toBe("Claude credential expired");
       expect(result.state.authStatus).toBe("expired_refreshable");
     });
+
+    it.each([
+      ["refreshable Keychain before non-refreshable file", true],
+      ["non-refreshable Keychain before refreshable file", false],
+    ])(
+      "keeps confirmed 429 expiry source-prioritized (%s)",
+      async (_name, keychainRefreshable) => {
+        const home = setupDarwin();
+        writeClaudeCredential(home, {
+          accessToken: "expired-file-token",
+          ...(keychainRefreshable
+            ? {}
+            : { refreshToken: "refresh-token-presence-only" }),
+          expiresAt: expired,
+        });
+        vi.doMock("../../src/lib/process.js", () => ({
+          execFileText: keychainCredential({
+            accessToken: "expired-keychain-token",
+            ...(keychainRefreshable
+              ? { refreshToken: "refresh-token-presence-only" }
+              : {}),
+            expiresAt: expired,
+          }),
+        }));
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async (input: string | URL | Request) =>
+            String(input).includes("/profile")
+              ? new Response(null, { status: 401 })
+              : new Response(null, { status: 429 }),
+          ),
+        );
+
+        const { fetchQuota } = await import("../../src/providers/claude.js");
+        const result = await fetchQuota({
+          allowKeychainPrompt: true,
+          refreshCredentials: false,
+        });
+
+        if (keychainRefreshable) {
+          expect(result.state.authStatus).toBe("expired_refreshable");
+          expect(result.state.error).toBe("Claude credential expired");
+        } else {
+          expect(result.state.authStatus).not.toBe("expired_refreshable");
+          expect(result.state.error).toBe("Claude credential expired");
+        }
+      },
+    );
   });
 
   it("returns fresh quota when an advisory-expired file token still succeeds", async () => {
