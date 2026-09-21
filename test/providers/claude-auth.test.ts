@@ -1362,54 +1362,57 @@ describe("Claude credential-state reporting", () => {
       expect(readCached("claude")).toBeDefined();
     });
 
-    it("explains when the Claude CLI could not be run", async () => {
-      const home = useTempHome();
-      writeClaudeCredential(home, {
-        accessToken: "expired-token",
-        refreshToken: "refresh-token-presence-only",
-        expiresAt: expired,
-      });
-      reject401();
-      vi.doMock("../../src/lib/running-processes.js", () => ({
-        listRunningCommandLines: vi.fn(async () => ({
-          status: "listed" as const,
-          processes: [],
-        })),
-      }));
-      vi.doMock(
-        "../../src/providers/delegated-refresh.js",
-        async (original) => ({
-          ...(await original<
-            typeof import("../../src/providers/delegated-refresh.js")
-          >()),
-          runRefreshDelegate: vi.fn(async () => ({
-            status: "unavailable" as const,
-            error: "refresh_command_not_found",
+    it.each(["refresh_command_not_found", "refresh_spawn_failed"])(
+      "explains when the Claude CLI could not be run (%s)",
+      async (refreshError) => {
+        const home = useTempHome();
+        writeClaudeCredential(home, {
+          accessToken: "expired-token",
+          refreshToken: "refresh-token-presence-only",
+          expiresAt: expired,
+        });
+        reject401();
+        vi.doMock("../../src/lib/running-processes.js", () => ({
+          listRunningCommandLines: vi.fn(async () => ({
+            status: "listed" as const,
+            processes: [],
           })),
-        }),
-      );
+        }));
+        vi.doMock(
+          "../../src/providers/delegated-refresh.js",
+          async (original) => ({
+            ...(await original<
+              typeof import("../../src/providers/delegated-refresh.js")
+            >()),
+            runRefreshDelegate: vi.fn(async () => ({
+              status: "unavailable" as const,
+              error: refreshError,
+            })),
+          }),
+        );
 
-      const { fetchQuota } = await import("../../src/providers/claude.js");
-      const result = await fetchQuota({
-        allowKeychainPrompt: false,
-        refreshCredentials: true,
-      });
-      const annotated = annotateQuotaAdvice({
-        generatedAt: "2026-07-06T20:00:00.000Z",
-        providers: [result],
-      });
+        const { fetchQuota } = await import("../../src/providers/claude.js");
+        const result = await fetchQuota({
+          allowKeychainPrompt: false,
+          refreshCredentials: true,
+        });
+        const annotated = annotateQuotaAdvice({
+          generatedAt: "2026-07-06T20:00:00.000Z",
+          providers: [result],
+        });
 
-      expect(annotated.providers[0]?.state).toMatchObject({
-        reason: "credentials_expired",
-        remedyCommand: "claude",
-      });
-      expect(annotated.help?.join("\n")).toContain(
-        "quota-axi could not run the Claude CLI; run `claude` once where it is installed.",
-      );
-      expect(annotated.help?.join("\n")).not.toContain(
-        "`claude doctor` did not recover it",
-      );
-    });
+        expect(annotated.providers[0]?.state).toMatchObject({
+          reason: "credentials_expired",
+          remedyCommand: "claude",
+        });
+        expect(annotated.help?.join("\n")).toContain(
+          "quota-axi could not run the Claude CLI; run `claude` once where it is installed.",
+        );
+        expect(annotated.help?.join("\n")).not.toContain(
+          "`claude doctor` did not recover it",
+        );
+      },
+    );
 
     it("offers no claude remedy while Claude Code is running and owns the refresh", async () => {
       const home = useTempHome();
