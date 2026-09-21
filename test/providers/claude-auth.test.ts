@@ -1051,6 +1051,69 @@ describe("Claude credential-state reporting", () => {
     });
   });
 
+  it("keeps a refreshable expired session unconfirmed while Claude Code is running", async () => {
+    usePlatform("darwin");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T20:00:00.000Z"));
+    const home = useTempHome();
+    writeClaudeCredential(home, {
+      accessToken: "expired-token",
+      refreshToken: "refresh-token-presence-only",
+      expiresAt: "2000-01-01T00:00:00.000Z",
+    });
+    vi.doMock("../../src/lib/process.js", () => ({
+      execFileText: vi.fn(async (command: string, args: string[]) => {
+        if (command === "security" && args[0] === "list-keychains") {
+          return `    "${fixtureKeychain}"\n`;
+        }
+        if (command === "security" && args[0] === "dump-keychain") {
+          return `keychain: "${fixtureKeychain}"\nversion: 512\nclass: "genp"\nattributes:\n    "acct"<blob>="fixture-user"\n    "svce"<blob>="other-service"\n`;
+        }
+        throw new Error("unexpected process call");
+      }),
+    }));
+    vi.doMock("../../src/lib/running-processes.js", () => ({
+      listRunningCommandLines: vi.fn(async () => ({
+        status: "listed" as const,
+        processes: [
+          { pid: process.pid + 1, commandLine: "/usr/local/bin/claude" },
+        ],
+      })),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+
+    const { readCachedProvider, writeCachedProviders } =
+      await import("../../src/cache.js");
+    writeCachedProviders([cachedClaudeQuota(34)]);
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: true,
+    });
+
+    expect(result).toMatchObject({
+      source: "cache",
+      state: {
+        status: "stale",
+        stale: true,
+        error: "Claude access token expired",
+        authStatus: "expired_refreshable",
+      },
+    });
+    expect(result.windows[0]?.percentUsed).toBe(34);
+    expect(readCachedProvider("claude")?.windows[0]?.percentUsed).toBe(34);
+    expect(result.attempts).toContainEqual({
+      source: "claude-cli-refresh",
+      status: "skipped",
+      error: "refresh_live_vendor_process",
+    });
+    expect(JSON.stringify(result)).not.toContain("refresh-token-presence-only");
+  });
+
   it("returns fresh quota when an advisory-expired file token still succeeds", async () => {
     const home = useTempHome();
     mkdirSync(join(home, ".claude"), { recursive: true });

@@ -25,6 +25,7 @@ import type {
   AuthProviderReport,
   AuthSourceReport,
   ProviderAdapter,
+  ProviderAuthStatus,
   ProviderOptions,
   ProviderQuota,
   ProviderStatus,
@@ -143,6 +144,7 @@ type ClaudeFailureOptions = {
   staleEligible?: boolean;
   retryAfter?: string;
   authUsable?: boolean;
+  authStatus?: ProviderAuthStatus;
   envProfileScopeDenied?: boolean;
   windows?: QuotaWindow[];
 };
@@ -509,6 +511,21 @@ function isLiveClaudeCodeProcess(commandLine: string): boolean {
 }
 
 /**
+ * A stored-expired session that still carries a refresh token and was rejected
+ * is soft expiry, not a sign-out (Kimi and Grok report the same class): status
+ * `unavailable`, `authStatus: expired_refreshable`, and the cache survives.
+ * Only presence of the refresh token was inspected; rotation stays the Claude
+ * CLI's.
+ */
+function refreshableExpiryFailure(): ClaudeFailure {
+  return new ClaudeFailure("Claude access token expired", {
+    status: "unavailable",
+    staleEligible: true,
+    authStatus: "expired_refreshable",
+  });
+}
+
+/**
  * The vendor outran the wait and was left running, so quota-axi does not know
  * what the credential store now holds. It refuses to turn that into a sign-out
  * verdict: the report is an unmeasured provider (stale cache when one applies),
@@ -608,6 +625,7 @@ async function attemptClaudeQuota(
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
   let refreshableExpiredRejected = false;
+  let refreshableExpiredFailure: ClaudeFailure | undefined;
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
@@ -684,13 +702,20 @@ async function attemptClaudeQuota(
           transientFailureIsEnv = true;
           break;
         }
-        if (failure.definitiveAuth) {
+        if (
+          failure.definitiveAuth &&
+          state.status === "expired" &&
+          state.refreshable
+        ) {
+          // A stored-expired session that still carries a refresh token is
+          // rejected only because its access token lapsed; the vendor rotates
+          // it, so it is not a sign-out and never retires the cache.
+          refreshableExpiredRejected = true;
+          refreshableExpiredFailure ??= refreshableExpiryFailure();
+        } else if (failure.definitiveAuth) {
           if (!definitiveFailure) {
             definitiveFailure = failure;
             definitiveFailureIsEnv = credential.source === "env";
-          }
-          if (state.status === "expired" && state.refreshable) {
-            refreshableExpiredRejected = true;
           }
           // The env token names the account a live session actually uses, so
           // its own definitive rejection is a verdict on that session: it must
@@ -770,6 +795,7 @@ async function attemptClaudeQuota(
   let failure =
     (transientFailureIsEnv ? definitiveFailure : undefined) ??
     transientFailure ??
+    refreshableExpiredFailure ??
     definitiveFailure ??
     new ClaudeFailure("Claude quota unavailable", { staleEligible: true });
   // A failed Keychain discovery/read never saw the live session. A 401 from a leftover
@@ -836,6 +862,7 @@ function failureReport(
     ...(observedWindows ? { source: "cli" } : {}),
   });
   if (failure.authUsable) report.state.authStatus = "usable";
+  if (failure.authStatus) report.state.authStatus = failure.authStatus;
   if (observedWindows) report.windows = observedWindows;
   return report;
 }
@@ -885,6 +912,7 @@ function staleClaudeReport(
     },
     attempts,
   };
+  if (failure.authStatus) report.state.authStatus = failure.authStatus;
   return failure.usageFetchFailure ? withUsageFetchFailure(report) : report;
 }
 
@@ -1835,6 +1863,7 @@ class ClaudeFailure extends Error {
   readonly staleEligible: boolean;
   readonly retryAfter: string | undefined;
   readonly authUsable: boolean;
+  readonly authStatus: ProviderAuthStatus | undefined;
   readonly envProfileScopeDenied: boolean;
   readonly windows: QuotaWindow[] | undefined;
   usageFetchFailure = false;
@@ -1850,6 +1879,7 @@ class ClaudeFailure extends Error {
     this.staleEligible = options.staleEligible ?? false;
     this.retryAfter = options.retryAfter;
     this.authUsable = options.authUsable ?? false;
+    this.authStatus = options.authStatus;
     this.envProfileScopeDenied = options.envProfileScopeDenied ?? false;
     this.windows = options.windows;
   }
