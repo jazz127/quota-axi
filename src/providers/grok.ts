@@ -870,7 +870,10 @@ export function normalizeGrokConsumerPayload(
     windows.push({
       id: "credits",
       label: "credits",
-      kind: "credits",
+      kind:
+        periodType === "weekly" || periodType === "monthly"
+          ? periodType
+          : "credits",
       percentUsed,
       percentRemaining: 100 - percentUsed,
       ...(periodStart ? { startsAt: periodStart } : {}),
@@ -892,7 +895,10 @@ export function normalizeGrokConsumerPayload(
     windows.push({
       id: `product:${productName.id}`,
       label: productName.label,
-      kind: "credits",
+      kind:
+        periodType === "weekly" || periodType === "monthly"
+          ? periodType
+          : "credits",
       percentUsed,
       percentRemaining: 100 - percentUsed,
       ...(periodStart ? { startsAt: periodStart } : {}),

@@ -26,6 +26,12 @@ const CONSUMER_QUOTA_URL =
   "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
 const GROK_BUILD_MODELS_URL = "https://cli-chat-proxy.grok.com/v1/models";
 const XAI_MODELS_URL = "https://api.x.ai/v1/models";
+const supergrokWeeklyFixture = JSON.parse(
+  readFileSync(
+    join(process.cwd(), "test/fixtures/grok/supergrok-weekly.json"),
+    "utf8",
+  ),
+) as { creditUsagePercent: number; prepaidBalance: number };
 const originalGrokAuthJson = process.env.GROK_AUTH_JSON;
 const originalGrokAuthPath = process.env.GROK_AUTH_PATH;
 const originalGrokAuth = process.env.GROK_AUTH;
@@ -296,7 +302,7 @@ describe("Grok consumer quota parsing", () => {
       {
         id: "credits",
         label: "credits",
-        kind: "credits",
+        kind: "weekly",
         percentUsed: 18.25,
         percentRemaining: 81.75,
         startsAt: "2026-07-20T20:00:00.000Z",
@@ -305,7 +311,7 @@ describe("Grok consumer quota parsing", () => {
       {
         id: "product:grok_build",
         label: "Grok Build",
-        kind: "credits",
+        kind: "weekly",
         percentUsed: 33.25,
         percentRemaining: 66.75,
         startsAt: "2026-07-20T20:00:00.000Z",
@@ -314,7 +320,7 @@ describe("Grok consumer quota parsing", () => {
       {
         id: "product:chat",
         label: "Chat",
-        kind: "credits",
+        kind: "weekly",
         percentUsed: 100,
         percentRemaining: 0,
         startsAt: "2026-07-20T20:00:00.000Z",
@@ -364,6 +370,51 @@ describe("Grok consumer quota parsing", () => {
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
   });
 
+  it("keeps prepaid zero separate from a live weekly subscription window", () => {
+    const result = normalizeGrokConsumerPayload(
+      consumerPayload({
+        percentUsed: supergrokWeeklyFixture.creditUsagePercent,
+        products: [
+          {
+            product: 2,
+            usagePercent: supergrokWeeklyFixture.creditUsagePercent,
+          },
+        ],
+        prepaid: supergrokWeeklyFixture.prepaidBalance,
+      }),
+    );
+    const report = withQuotaSemantics(
+      {
+        provider: "grok",
+        label: "Grok",
+        source: "web",
+        ...result,
+        state: {
+          status: "fresh",
+          stale: false,
+          refreshedAt: result.refreshedAt,
+          sourcesTried: ["web"],
+        },
+      },
+      "2026-09-21T07:05:00.000Z",
+    );
+
+    expect(result.windows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "credits", kind: "weekly" }),
+        expect.objectContaining({ id: "product:grok_build", kind: "weekly" }),
+      ]),
+    );
+    expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
+    expect(report.quotaSemantics?.effectiveAvailability).toContainEqual(
+      expect.objectContaining({
+        scope: "all_products",
+        status: "known",
+        effectivePercentRemaining: 36,
+      }),
+    );
+  });
+
   it("supports monthly periods and unknown product enum values", () => {
     const result = normalizeGrokConsumerPayload(
       consumerPayload({
@@ -375,6 +426,7 @@ describe("Grok consumer quota parsing", () => {
     expect(result.windows[1]).toMatchObject({
       id: "product:unknown_99",
       label: "Product 99",
+      kind: "monthly",
       percentUsed: 12.5,
     });
   });
