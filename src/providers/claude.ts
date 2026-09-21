@@ -238,7 +238,7 @@ export async function fetchQuota(
       const run = await runRefreshDelegate(CLAUDE_CLI_REFRESH_DELEGATE);
       attempts.push(refreshDelegateAttempt(CLAUDE_CLI_REFRESH_DELEGATE, run));
       if (run.status === "ran") {
-        const retry = await attemptClaudeQuota(options, attempts);
+        const retry = await attemptClaudeQuota(options, attempts, true);
         if (retry.kind === "success") return retry.report;
         pass = retry;
       } else if (run.status === "unconfirmed") {
@@ -526,6 +526,26 @@ function refreshableExpiryFailure(): ClaudeFailure {
 }
 
 /**
+ * Rejected soft expiry is `expired_refreshable` only while no delegated
+ * rotation has genuinely run. Once `claude doctor` ran and the same stored
+ * refreshable token is rejected again, the vendor's own rotation failed, which
+ * is the strongest sign-out evidence quota-axi has, so it keeps the
+ * `auth_required` verdict it published before soft expiry existed.
+ */
+function isSoftRefreshableRejection(
+  failure: ClaudeFailure,
+  state: AvailableCredentialState | AdvisoryExpiredCredentialState,
+  afterDelegatedRefresh: boolean,
+): boolean {
+  return (
+    !afterDelegatedRefresh &&
+    failure.definitiveAuth &&
+    state.status === "expired" &&
+    state.refreshable
+  );
+}
+
+/**
  * The vendor outran the wait and was left running, so quota-axi does not know
  * what the credential store now holds. It refuses to turn that into a sign-out
  * verdict: the report is an unmeasured provider (stale cache when one applies),
@@ -565,6 +585,7 @@ async function confirmClaudeStoredExpiry(
 async function attemptClaudeQuota(
   options: ProviderOptions,
   attempts: SourceAttempt[],
+  afterDelegatedRefresh = false,
 ): Promise<ClaudeQuotaPass> {
   const credentialStates = await readCredentialStates(options);
   const credentialCandidates = credentialStates
@@ -625,7 +646,6 @@ async function attemptClaudeQuota(
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
   let refreshableExpiredRejected = false;
-  let refreshableExpiredFailure: ClaudeFailure | undefined;
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
@@ -653,7 +673,13 @@ async function attemptClaudeQuota(
           }),
         };
       } catch (error) {
-        const failure = claudeFailureFor(error);
+        let failure = claudeFailureFor(error);
+        const softRefreshable = isSoftRefreshableRejection(
+          failure,
+          state,
+          afterDelegatedRefresh,
+        );
+        if (softRefreshable) failure = refreshableExpiryFailure();
         attempts[attempts.length - 1] = {
           source: credential.source,
           status: "failed",
@@ -702,17 +728,14 @@ async function attemptClaudeQuota(
           transientFailureIsEnv = true;
           break;
         }
-        if (
-          failure.definitiveAuth &&
-          state.status === "expired" &&
-          state.refreshable
-        ) {
+        if (softRefreshable || failure.definitiveAuth) {
           // A stored-expired session that still carries a refresh token is
           // rejected only because its access token lapsed; the vendor rotates
-          // it, so it is not a sign-out and never retires the cache.
-          refreshableExpiredRejected = true;
-          refreshableExpiredFailure ??= refreshableExpiryFailure();
-        } else if (failure.definitiveAuth) {
+          // it, so it is not a sign-out and never retires the cache. Among
+          // resolved rejections the highest-priority candidate's verdict
+          // wins, whichever class it is: a bystander file must not speak for
+          // the session the source order names first.
+          if (softRefreshable) refreshableExpiredRejected = true;
           if (!definitiveFailure) {
             definitiveFailure = failure;
             definitiveFailureIsEnv = credential.source === "env";
@@ -740,6 +763,9 @@ async function attemptClaudeQuota(
             ? new ClaudeFailure("Claude credential expired", {
                 status: "unavailable",
                 staleEligible: true,
+                ...(state.refreshable
+                  ? { authStatus: "expired_refreshable" as const }
+                  : {}),
               }).withUsageFetchFailure()
             : failure.withUsageFetchFailure();
           transientFailureIsEnv = credential.source === "env";
@@ -796,11 +822,15 @@ async function attemptClaudeQuota(
     (transientFailureIsEnv ? definitiveFailure : undefined) ??
     transientFailure ??
     definitiveFailure ??
-    refreshableExpiredFailure ??
     new ClaudeFailure("Claude quota unavailable", { staleEligible: true });
   // A failed Keychain discovery/read never saw the live session. A 401 from a leftover
   // oauth-file sidecar is not evidence the user is signed out of Claude.
-  if (keychainFailure && failure.definitiveAuth && !definitiveFailureIsEnv) {
+  // A refreshable soft expiry from that sidecar is no better evidence.
+  if (
+    keychainFailure &&
+    (failure.definitiveAuth || failure.authStatus === "expired_refreshable") &&
+    !definitiveFailureIsEnv
+  ) {
     failure = new ClaudeFailure(keychainFailure.source.error!, {
       staleEligible: true,
     });
