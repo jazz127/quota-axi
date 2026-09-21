@@ -213,9 +213,9 @@ function elevenLabsSemantics(
  * OpenCode Go's usage endpoint reports the plan's stacked caps: the vendor
  * documents $12 per rolling 5 hours, $30 per week, and $60 per month, and
  * reaching a cap blocks Go-plan requests (the vendor's free-model fallback or
- * an opted-in Zen balance may still serve past a zeroed plan window, which
- * this endpoint does not report). That is the missing joint-bound evidence,
- * so the three windows jointly bound Go-plan usage at `all_models` scope.
+ * an opted-in balance may still serve past a zeroed plan window). Any reported
+ * balance is separate credit evidence, not joint-bound evidence, so the three
+ * windows jointly bound Go-plan usage at `all_models` scope.
  */
 function opencodeGoSemantics(
   windows: QuotaWindow[],
