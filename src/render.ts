@@ -113,7 +113,6 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
     const scopes = provider.quotaSemantics?.effectiveAvailability ?? [];
     const scopeAttention: AttentionRow[] = [];
     let measured = false;
-    const quotaRowsBefore = blocks.quota.length;
 
     for (const scope of scopes) {
       if (scope.effectivePercentRemaining === undefined) {
@@ -145,12 +144,7 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
     }
 
     blocks.attention.push(
-      ...providerAttention(
-        provider,
-        measured,
-        scopeAttention.length,
-        blocks.quota.length > quotaRowsBefore,
-      ),
+      ...providerAttention(provider, measured, scopeAttention.length),
     );
     blocks.attention.push(...shareRows(provider));
     blocks.attention.push(...scopeAttention);
@@ -205,12 +199,11 @@ function providerAttention(
   provider: ProviderQuota,
   measured: boolean,
   scopeRows: number,
-  hasQuotaRow: boolean,
 ): AttentionRow[] {
   // Degraded sources are appended, never counted: they name the provider but
   // not why a scope is missing, so they must not suppress the `no_quota` row.
   return [
-    ...providerStateRows(provider, measured, scopeRows, hasQuotaRow),
+    ...providerStateRows(provider, measured, scopeRows),
     ...degradedSourceRows(provider),
   ];
 }
@@ -254,7 +247,6 @@ function providerStateRows(
   provider: ProviderQuota,
   measured: boolean,
   scopeRows: number,
-  hasQuotaRow: boolean,
 ): AttentionRow[] {
   const rows: AttentionRow[] = [];
   const primary = primaryProviderRow(provider);
@@ -288,15 +280,6 @@ function providerStateRows(
         kind: "credits",
         detail: `${credits}`,
         remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
-      });
-    }
-    if (!hasQuotaRow && rows.length + scopeRows === 0) {
-      rows.push({
-        ...providerColumns(provider),
-        scope: "all",
-        kind: "no_quota",
-        detail: provider.state.error ?? "no measurable scope",
-        remedy: provider.state.remedyCommand ?? NONE,
       });
     }
     return rows;
