@@ -808,6 +808,7 @@ async function attemptClaudeQuota(
   // its own non-definitive failure must not mask a stored source's genuine
   // definitive rejection, since that stored verdict is still fully resolved.
   let failure =
+    confirmedExpiryFailure ??
     (transientFailureIsEnv ? definitiveFailure : undefined) ??
     transientFailure ??
     definitiveFailure ??

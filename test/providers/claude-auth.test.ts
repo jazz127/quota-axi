@@ -1578,6 +1578,47 @@ describe("Claude credential-state reporting", () => {
         }
       },
     );
+
+    it("keeps confirmed expiry ahead of a lower-priority transient sibling", async () => {
+      const home = setupDarwin();
+      writeClaudeCredential(home, {
+        accessToken: "expired-file-token",
+        expiresAt: expired,
+      });
+      const readCached = await seedCache();
+      vi.doMock("../../src/lib/process.js", () => ({
+        execFileText: keychainCredential({
+          accessToken: "expired-keychain-token",
+          refreshToken: "refresh-token-presence-only",
+          expiresAt: expired,
+        }),
+      }));
+      let usageCalls = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request) => {
+          if (String(input).includes("/profile"))
+            return new Response(null, { status: 401 });
+          usageCalls += 1;
+          return new Response(null, {
+            status: usageCalls === 1 ? 429 : 500,
+          });
+        }),
+      );
+
+      const { fetchQuota } = await import("../../src/providers/claude.js");
+      const result = await fetchQuota({
+        allowKeychainPrompt: true,
+        refreshCredentials: false,
+      });
+
+      expect(result.state).toMatchObject({
+        status: "stale",
+        error: "Claude credential expired",
+        authStatus: "expired_refreshable",
+      });
+      expect(readCached("claude")).toBeDefined();
+    });
   });
 
   it("returns fresh quota when an advisory-expired file token still succeeds", async () => {
