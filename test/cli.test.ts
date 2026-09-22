@@ -1506,10 +1506,6 @@ describe("new provider public quota output", () => {
       expect.objectContaining({
         provider: "openrouter",
         source: "api",
-        account: {
-          accountId: "personal",
-          identityStatus: "unverified",
-        },
         credits: { remaining: 73.25, unit: "usd" },
         windows: expect.arrayContaining([
           expect.objectContaining({

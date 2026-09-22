@@ -61,7 +61,6 @@ type Dependencies = {
 };
 
 export type NormalizedOpenRouterPayload = {
-  label?: string;
   limit?: number;
   remaining?: number;
   period?: string;
@@ -220,9 +219,6 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         provider: "openrouter",
         label: LABEL,
         source: "api",
-        account: normalized.label
-          ? { accountId: normalized.label, identityStatus: "unverified" }
-          : undefined,
         windows,
         ...(accountCredits
           ? { credits: { remaining: accountCredits.remaining, unit: "usd" } }
@@ -311,7 +307,6 @@ export function normalizeOpenRouterPayload(
   if (!unlimited && limit === undefined) throw new Error("invalid_limit");
   const remaining = asFiniteNumber(data.limit_remaining);
   const period = asString(data.limit_reset);
-  const label = asString(data.label);
   const usage = (
     ["usage", "usage_daily", "usage_weekly", "usage_monthly"] as const
   )
@@ -330,7 +325,6 @@ export function normalizeOpenRouterPayload(
     : undefined;
 
   return {
-    label,
     limit,
     remaining,
     period,
@@ -355,8 +349,10 @@ export function normalizeOpenRouterCredits(
 ): NormalizedOpenRouterCredits {
   const root = objectValue(raw);
   if (!root) throw new Error("invalid_credits_payload");
-  const remaining = asFiniteNumber(root.total_credits);
-  const usage = asFiniteNumber(root.total_usage);
+  const data = objectValue(root.data);
+  if (!data) throw new Error("missing_data");
+  const remaining = asFiniteNumber(data.total_credits);
+  const usage = asFiniteNumber(data.total_usage);
   if (remaining === undefined || usage === undefined)
     throw new Error("invalid_credits_payload");
   return { remaining: remaining - usage };

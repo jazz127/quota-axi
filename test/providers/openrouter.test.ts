@@ -47,9 +47,10 @@ describe("OpenRouter provider", () => {
       source: "api",
       state: { status: "fresh", stale: false },
       credits: { remaining: 73.25, unit: "usd" },
-      account: { accountId: "personal", identityStatus: "unverified" },
       attempts: [{ source: "env:OPENROUTER_API_KEY", status: "success" }],
     });
+    expect(report.account).toBeUndefined();
+    expect(JSON.stringify(report)).not.toContain("personal");
     expect(report.windows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -235,7 +236,7 @@ describe("OpenRouter provider", () => {
   it("reports funded capless and exhausted account credit separately from key meters", async () => {
     const responses = [
       { data: { limit: null, usage: 25.1 } },
-      { total_credits: 25, total_usage: 25.01 },
+      { data: { total_credits: 25, total_usage: 25.01 } },
     ];
     const report = await createOpenRouterAdapter({
       credential: () => ({
@@ -308,7 +309,7 @@ describe("OpenRouter provider", () => {
         new Response(
           JSON.stringify(
             url.endsWith("/credits")
-              ? { total_credits: 0, total_usage: 0 }
+              ? { data: { total_credits: 0, total_usage: 0 } }
               : {
                   data: {
                     limit: null,
@@ -352,7 +353,7 @@ describe("OpenRouter provider", () => {
         new Response(
           JSON.stringify(
             url.endsWith("/credits")
-              ? { total_credits: 0, total_usage: 0 }
+              ? { data: { total_credits: 0, total_usage: 0 } }
               : {
                   data: {
                     limit: null,
@@ -443,11 +444,13 @@ describe("OpenRouter provider", () => {
 
   it("normalizes account credits and rejects malformed credit responses", () => {
     expect(
-      normalizeOpenRouterCredits({ total_credits: 25, total_usage: 10 }),
+      normalizeOpenRouterCredits({
+        data: { total_credits: 25, total_usage: 10 },
+      }),
     ).toEqual({ remaining: 15 });
-    expect(() => normalizeOpenRouterCredits({ total_credits: 25 })).toThrow(
-      "invalid_credits_payload",
-    );
+    expect(() =>
+      normalizeOpenRouterCredits({ data: { total_credits: 25 } }),
+    ).toThrow("invalid_credits_payload");
   });
 
   it("reports unusable local credentials as auth_required", async () => {
