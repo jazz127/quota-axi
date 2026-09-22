@@ -265,24 +265,53 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
         provider.source === "cli"
       ),
   );
+  const existingProviders = readCacheProviders();
+  const existingByProvider = new Map(
+    existingProviders.map((provider) => [
+      cacheIdentity(provider.snapshot),
+      provider,
+    ]),
+  );
+  const preservesOpenRouter = (provider: ProviderQuota): boolean => {
+    if (
+      provider.provider !== "openrouter" ||
+      provider.state.status !== "fresh"
+    )
+      return false;
+    const existing = existingByProvider.get(cacheIdentity(provider));
+    return Boolean(
+      existing?.snapshot.credits !== undefined &&
+        existing.credentialContextId !== undefined &&
+        existing.credentialContextId === openRouterReadingContextId(),
+    );
+  };
   const clearProviders = new Set(
     providers
       .filter(
         (provider) =>
           provider.state.status === "fresh" &&
           provider.windows.length === 0 &&
-          !missingRequiredContext(provider.provider),
+          !missingRequiredContext(provider.provider) &&
+          !preservesOpenRouter(provider),
       )
       .map(cacheIdentity),
   );
   const cacheable = providers
-    .map(toCacheProvider)
+    .map((provider) => {
+      if (!preservesOpenRouter(provider) || provider.credits !== undefined)
+        return toCacheProvider(provider);
+      const existing = existingByProvider.get(cacheIdentity(provider));
+      return toCacheProvider({
+        ...provider,
+        credits: existing?.snapshot.credits,
+      });
+    })
     .filter((provider): provider is CachedProvider => Boolean(provider));
 
   const file = cacheFilePath();
   const byProvider = new Map<string, CachedProvider>();
   let clearedExisting = false;
-  for (const provider of readCacheProviders()) {
+  for (const provider of existingProviders) {
     if (clearProviders.has(cacheIdentity(provider.snapshot))) {
       clearedExisting = true;
       continue;
@@ -291,13 +320,6 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
   }
   if (cacheable.length === 0 && !clearedExisting) return;
   for (const provider of cacheable) {
-    if (
-      provider.snapshot.provider === "openrouter" &&
-      provider.snapshot.credits === undefined
-    ) {
-      const existing = byProvider.get(cacheIdentity(provider.snapshot));
-      if (existing?.snapshot.credits !== undefined) continue;
-    }
     byProvider.set(cacheIdentity(provider.snapshot), provider);
   }
   const merged = [...byProvider.values()].sort(

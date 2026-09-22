@@ -473,6 +473,30 @@ oauth_host = "https://auth.kimi.ai"
       },
     ]);
 
+    expect(readCachedProvider("openrouter")?.windows[0]?.percentUsed).toBe(50);
+    expect(readCachedProvider("openrouter")?.credits).toEqual({
+      remaining: 8,
+      unit: "usd",
+    });
+  });
+
+  it("retains OpenRouter credits when a fresh creditless reading has no windows", () => {
+    useTempCache();
+    publishOpenRouterReadingContextId("a".repeat(64));
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 42),
+        credits: { remaining: 8, unit: "usd" },
+      },
+    ]);
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 50),
+        windows: [],
+        credits: undefined,
+      },
+    ]);
+
     expect(readCachedProvider("openrouter")?.windows[0]?.percentUsed).toBe(42);
     expect(readCachedProvider("openrouter")?.credits).toEqual({
       remaining: 8,
