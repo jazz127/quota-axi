@@ -231,7 +231,7 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         sourcesTried: sourceNames(attempts),
         attempts,
       });
-      if (normalized.unlimited && !accountCredits)
+      if (normalized.unlimited && !accountCredits && !cached?.credits)
         report.state.error =
           "openrouter_no_spend_cap_credit_balance_not_reported";
       return report;
