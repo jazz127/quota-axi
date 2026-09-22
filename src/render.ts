@@ -303,6 +303,15 @@ function providerStateRows(
     return rows;
   }
   const credits = creditBalance(provider);
+  if (provider.provider === "openrouter" && provider.state.error && !credits) {
+    rows.push({
+      ...providerColumns(provider),
+      scope: "all",
+      kind: "credits",
+      detail: provider.state.error,
+      remedy: NONE,
+    });
+  }
   if (credits) {
     rows.unshift({
       ...providerColumns(provider),
