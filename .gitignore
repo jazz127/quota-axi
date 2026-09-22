@@ -4,4 +4,5 @@ node_modules/
 *.log
 coverage/
 .tmp-cache/
+.tmp-pi-live*/
 .no-mistakes/evidence/
