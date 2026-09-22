@@ -384,6 +384,35 @@ describe("OpenRouter provider", () => {
     ]);
   });
 
+  it("reuses a scoped cache when the key response is malformed", async () => {
+    const cached = {
+      provider: "openrouter" as const,
+      label: "OpenRouter",
+      source: "api" as const,
+      windows: [{ id: "usage", label: "usage", kind: "credits" as const }],
+      credits: { remaining: 8, unit: "usd" as const },
+      state: { status: "fresh" as const, stale: false, sourcesTried: ["api"] },
+    };
+    const report = await createOpenRouterAdapter({
+      credential: () => ({
+        status: "available",
+        key: KEY,
+        source: "env:OPENROUTER_API_KEY",
+      }),
+      fetch: async () =>
+        new Response(JSON.stringify({ data: { limit: "bad" } }), {
+          headers: { "content-type": "application/json" },
+        }),
+      readCachedProvider: () => cached,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      source: "cache",
+      state: { status: "stale", stale: true, error: "invalid_limit" },
+      credits: { remaining: 8, unit: "usd" },
+    });
+  });
+
   it("normalizes account credits and rejects malformed credit responses", () => {
     expect(
       normalizeOpenRouterCredits({ total_credits: 25, total_usage: 10 }),

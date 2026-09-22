@@ -457,6 +457,29 @@ oauth_host = "https://auth.kimi.ai"
     expect(payload.providers[0]?.credentialContext).toBe(first);
   });
 
+  it("preserves OpenRouter credit evidence when a fresh reading is creditless", () => {
+    useTempCache();
+    publishOpenRouterReadingContextId("a".repeat(64));
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 42),
+        credits: { remaining: 8, unit: "usd" },
+      },
+    ]);
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 50),
+        credits: undefined,
+      },
+    ]);
+
+    expect(readCachedProvider("openrouter")?.windows[0]?.percentUsed).toBe(42);
+    expect(readCachedProvider("openrouter")?.credits).toEqual({
+      remaining: 8,
+      unit: "usd",
+    });
+  });
+
   it("writes normalized cache data with mode 0600 and no attempts or sentinel secret", () => {
     useTempCache();
     const sentinel = "CACHE-SENTINEL-KIMI-612704";

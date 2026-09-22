@@ -290,8 +290,16 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
     byProvider.set(cacheIdentity(provider.snapshot), provider);
   }
   if (cacheable.length === 0 && !clearedExisting) return;
-  for (const provider of cacheable)
+  for (const provider of cacheable) {
+    if (
+      provider.snapshot.provider === "openrouter" &&
+      provider.snapshot.credits === undefined
+    ) {
+      const existing = byProvider.get(cacheIdentity(provider.snapshot));
+      if (existing?.snapshot.credits !== undefined) continue;
+    }
     byProvider.set(cacheIdentity(provider.snapshot), provider);
+  }
   const merged = [...byProvider.values()].sort(
     (a, b) =>
       PROVIDER_IDS.indexOf(a.snapshot.provider) -

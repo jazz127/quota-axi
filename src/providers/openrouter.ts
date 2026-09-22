@@ -1,4 +1,5 @@
 import { deleteCachedProvider as deleteCachedProviderFromDisk } from "../cache.js";
+import { readCachedOpenRouterProvider } from "../cache.js";
 import { providerFetch } from "../lib/http.js";
 import {
   clearOpenRouterReadingContextId,
@@ -12,7 +13,12 @@ import type {
   QuotaWindow,
   SourceAttempt,
 } from "../types.js";
-import { failedProvider, sourceNames, successProvider } from "./common.js";
+import {
+  failedProvider,
+  sourceNames,
+  staleFromCache,
+  successProvider,
+} from "./common.js";
 import {
   credentialCandidates,
   type EnvPiCredentialResolution,
@@ -48,6 +54,7 @@ const OPENROUTER_SOURCES: EnvPiCredentialSources = {
 type Dependencies = {
   credential: () => EnvPiCredentialResolution | EnvPiCredentialResolution[];
   fetch: typeof providerFetch;
+  readCachedProvider: typeof readCachedOpenRouterProvider;
   deleteCachedProvider: typeof deleteCachedProviderFromDisk;
   now: () => number;
   deadlineMs: number;
@@ -93,6 +100,7 @@ export function createOpenRouterAdapter(
   const dependencies: Dependencies = {
     credential: () => resolveOpenRouterCredentials(),
     fetch: providerFetch,
+    readCachedProvider: readCachedOpenRouterProvider,
     deleteCachedProvider: deleteCachedProviderFromDisk,
     now: Date.now,
     deadlineMs: DEADLINE_MS,
@@ -235,6 +243,17 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
       if (code === "provider_auth_rejected") {
         finalFailure = preferRemoteAuthFailure(finalFailure, code);
         continue;
+      }
+      const cached = dependencies.readCachedProvider(
+        openRouterCacheContextId(resolution.source, resolution.key),
+      );
+      if (cached) {
+        return staleFromCache(
+          cached,
+          code,
+          sourceNames(attempts),
+          attempts,
+        );
       }
       return failedProvider({
         provider: "openrouter",
