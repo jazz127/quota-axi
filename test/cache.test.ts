@@ -15,6 +15,7 @@ import {
   readCachedCommandCodeProvider,
   readCachedKimiProvider,
   readCachedMiniMaxProvider,
+  readCachedOpenRouterProvider,
   readCachedProvider,
   writeCachedProviders,
 } from "../src/cache.js";
@@ -29,6 +30,10 @@ import { staleFromCache } from "../src/providers/common.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { createKimiCodeCliCredentialSource } from "../src/providers/kimi-code-cli-credential.js";
 import { publishMiniMaxReadingContextId } from "../src/providers/minimax-cache-context.js";
+import {
+  clearOpenRouterReadingContextId,
+  publishOpenRouterReadingContextId,
+} from "../src/providers/openrouter-cache-context.js";
 import type { ProviderId, ProviderQuota } from "../src/types.js";
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
@@ -47,6 +52,7 @@ afterEach(() => {
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
   clearCommandCodeReadingContextId();
+  clearOpenRouterReadingContextId();
 });
 
 describe("quota cache", () => {
@@ -434,6 +440,68 @@ oauth_host = "https://auth.kimi.ai"
     );
     expect(readCachedMiniMaxProvider(globalContext)).toBeUndefined();
     expect(readCachedProvider("minimax")?.windows[0].percentUsed).toBe(11);
+  });
+
+  it("scopes OpenRouter cache provenance to the answering credential", () => {
+    useTempCache();
+    const first = "a".repeat(64);
+    const second = "b".repeat(64);
+    publishOpenRouterReadingContextId(first);
+    writeCachedProviders([quota("openrouter", 42)]);
+
+    expect(readCachedOpenRouterProvider(first)).toBeDefined();
+    expect(readCachedOpenRouterProvider(second)).toBeUndefined();
+    const payload = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
+      providers: Array<{ credentialContext?: string }>;
+    };
+    expect(payload.providers[0]?.credentialContext).toBe(first);
+  });
+
+  it("preserves OpenRouter credit evidence when a fresh reading is creditless", () => {
+    useTempCache();
+    publishOpenRouterReadingContextId("a".repeat(64));
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 42),
+        credits: { remaining: 8, unit: "usd" },
+      },
+    ]);
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 50),
+        credits: undefined,
+      },
+    ]);
+
+    expect(readCachedProvider("openrouter")?.windows[0]?.percentUsed).toBe(50);
+    expect(readCachedProvider("openrouter")?.credits).toEqual({
+      remaining: 8,
+      unit: "usd",
+    });
+  });
+
+  it("retains OpenRouter credits when a fresh creditless reading has no windows", () => {
+    useTempCache();
+    publishOpenRouterReadingContextId("a".repeat(64));
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 42),
+        credits: { remaining: 8, unit: "usd" },
+      },
+    ]);
+    writeCachedProviders([
+      {
+        ...quota("openrouter", 50),
+        windows: [],
+        credits: undefined,
+      },
+    ]);
+
+    expect(readCachedProvider("openrouter")?.windows[0]?.percentUsed).toBe(42);
+    expect(readCachedProvider("openrouter")?.credits).toEqual({
+      remaining: 8,
+      unit: "usd",
+    });
   });
 
   it("writes normalized cache data with mode 0600 and no attempts or sentinel secret", () => {

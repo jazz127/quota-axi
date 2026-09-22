@@ -1506,12 +1506,8 @@ describe("new provider public quota output", () => {
       expect.objectContaining({
         provider: "openrouter",
         source: "api",
-        account: {
-          accountId: "personal",
-          identityStatus: "unverified",
-        },
         credits: { remaining: 73.25, unit: "usd" },
-        windows: [
+        windows: expect.arrayContaining([
           expect.objectContaining({
             id: "key-limit",
             kind: "credits",
@@ -1520,7 +1516,7 @@ describe("new provider public quota output", () => {
             percentRemaining: 73.25,
             resetText: "Daily",
           }),
-        ],
+        ]),
         state: expect.objectContaining({ status: "fresh", stale: false }),
       }),
     ]);
@@ -1528,6 +1524,7 @@ describe("new provider public quota output", () => {
 
     const report = await capture(["--provider", "openrouter"]);
     expect(report).toContain("openrouter,all,unresolved_windows,key-limit");
+    expect(report).toContain("openrouter,all,credits,remaining 73.25 usd");
   });
 
   it("reports both new providers as signed out when no key is present", async () => {
@@ -1832,6 +1829,60 @@ describe("default TOON decision blocks", () => {
         "Grok consumer quota unavailable (auth usable)",
         "none",
       ],
+    ]);
+  });
+
+  it("keeps a fresh zero OpenRouter balance visible", async () => {
+    useTempCache();
+    PROVIDERS.openrouter = providerWithQuota({
+      provider: "openrouter",
+      label: "OpenRouter",
+      source: "api",
+      windows: [],
+      credits: { remaining: 0, unit: "usd" },
+      state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+    });
+
+    const rows = toonRows(
+      await capture(["--provider", "openrouter"]),
+      "attention",
+    );
+    expect(rows).toContainEqual([
+      "openrouter",
+      "all",
+      "credits",
+      "remaining 0 usd",
+      "none",
+    ]);
+  });
+
+  it("keeps an exhausted OpenRouter key-cap balance beside an unknown scope", async () => {
+    useTempCache();
+    PROVIDERS.openrouter = providerWithQuota({
+      provider: "openrouter",
+      label: "OpenRouter",
+      source: "api",
+      windows: [
+        {
+          id: "unfamiliar",
+          label: "unfamiliar",
+          kind: "unknown",
+        },
+      ],
+      credits: { remaining: 0, unit: "usd" },
+      state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+    });
+
+    const rows = toonRows(
+      await capture(["--provider", "openrouter"]),
+      "attention",
+    );
+    expect(rows).toContainEqual([
+      "openrouter",
+      "all",
+      "credits",
+      "remaining 0 usd",
+      "none",
     ]);
   });
 

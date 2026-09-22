@@ -10,6 +10,7 @@ import { kimiReadingContextId } from "./providers/kimi-cache-context.js";
 import { commandCodeReadingContextId } from "./providers/commandcode-cache-context.js";
 import { elevenLabsReadingContextId } from "./providers/elevenlabs-cache-context.js";
 import { miniMaxReadingContextId } from "./providers/minimax-cache-context.js";
+import { openRouterReadingContextId } from "./providers/openrouter-cache-context.js";
 import { isPiCodexSource } from "./providers/pi-codex-credential.js";
 import type {
   ProviderId,
@@ -96,6 +97,7 @@ const CONTEXT_SCOPED_PROVIDERS: Partial<
   elevenlabs: elevenLabsReadingContextId,
   codex: codexStampContextId,
   minimax: miniMaxReadingContextId,
+  openrouter: openRouterReadingContextId,
 };
 
 /**
@@ -225,6 +227,13 @@ export function readCachedMiniMaxProvider(
   return readCachedProviderInContext("minimax", contextId);
 }
 
+/** OpenRouter cache reuse is bound to the source and credential that answered. */
+export function readCachedOpenRouterProvider(
+  contextId: string,
+): ProviderQuota | undefined {
+  return readCachedProviderInContext("openrouter", contextId);
+}
+
 /**
  * ElevenLabs stale quota may only be reused when the cache record proves it was
  * captured with the same API key, so one subscription's characters can never
@@ -256,24 +265,50 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
         provider.source === "cli"
       ),
   );
+  const existingProviders = readCacheProviders();
+  const existingByProvider = new Map(
+    existingProviders.map((provider) => [
+      cacheIdentity(provider.snapshot),
+      provider,
+    ]),
+  );
+  const preservesOpenRouter = (provider: ProviderQuota): boolean => {
+    if (provider.provider !== "openrouter" || provider.state.status !== "fresh")
+      return false;
+    const existing = existingByProvider.get(cacheIdentity(provider));
+    return Boolean(
+      existing?.snapshot.credits !== undefined &&
+      existing.credentialContextId !== undefined &&
+      existing.credentialContextId === openRouterReadingContextId(),
+    );
+  };
   const clearProviders = new Set(
     providers
       .filter(
         (provider) =>
           provider.state.status === "fresh" &&
           provider.windows.length === 0 &&
-          !missingRequiredContext(provider.provider),
+          !missingRequiredContext(provider.provider) &&
+          !preservesOpenRouter(provider),
       )
       .map(cacheIdentity),
   );
   const cacheable = providers
-    .map(toCacheProvider)
+    .map((provider) => {
+      if (!preservesOpenRouter(provider) || provider.credits !== undefined)
+        return toCacheProvider(provider);
+      const existing = existingByProvider.get(cacheIdentity(provider));
+      return toCacheProvider({
+        ...provider,
+        credits: existing?.snapshot.credits,
+      });
+    })
     .filter((provider): provider is CachedProvider => Boolean(provider));
 
   const file = cacheFilePath();
   const byProvider = new Map<string, CachedProvider>();
   let clearedExisting = false;
-  for (const provider of readCacheProviders()) {
+  for (const provider of existingProviders) {
     if (clearProviders.has(cacheIdentity(provider.snapshot))) {
       clearedExisting = true;
       continue;
@@ -281,8 +316,9 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
     byProvider.set(cacheIdentity(provider.snapshot), provider);
   }
   if (cacheable.length === 0 && !clearedExisting) return;
-  for (const provider of cacheable)
+  for (const provider of cacheable) {
     byProvider.set(cacheIdentity(provider.snapshot), provider);
+  }
   const merged = [...byProvider.values()].sort(
     (a, b) =>
       PROVIDER_IDS.indexOf(a.snapshot.provider) -
@@ -635,6 +671,9 @@ function normalizeCachedWindow(raw: unknown): QuotaWindow | undefined {
   assignString(result, "resetsAt", data.resetsAt);
   assignString(result, "resetText", data.resetText);
   assignNumber(result, "windowSeconds", data.windowSeconds);
+  assignNumber(result, "used", data.used);
+  assignNumber(result, "limit", data.limit);
+  assignNumber(result, "remaining", data.remaining);
   assignNumber(result, "spentUsd", data.spentUsd);
   assignNumber(result, "limitUsd", data.limitUsd);
   return result;
