@@ -52,6 +52,10 @@ import {
   PI_ANTHROPIC_SOURCE,
   type PiAnthropicCredentialResolution,
 } from "./pi-anthropic-credential.js";
+import {
+  claudePiContextId,
+  stampClaudePiContext,
+} from "./claude-cache-context.js";
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_API_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -207,6 +211,7 @@ type ClaudeQuotaPass =
       refreshableExpiredRejected: boolean;
       /** A Keychain value read was withheld, so its store cannot be re-read. */
       keychainWithheld: boolean;
+      cacheContextId?: string;
       /**
        * The reported failure is the environment token's own definitive
        * rejection, reached with no stored candidate ever tried. It must not
@@ -257,7 +262,7 @@ export async function fetchQuota(
   return failureReport(
     pass.failure,
     attempts,
-    credentialContextId,
+    pass.cacheContextId ?? credentialContextId,
     claudeEnvOauthToken() !== undefined,
     pass.definitiveFailureIsEnvOnly,
   );
@@ -620,10 +625,15 @@ async function attemptClaudeQuota(
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
   let refreshableExpiredRejected = false;
+  let cacheContextId = claudeCredentialContextId();
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
       const credential = state.credentials;
+      cacheContextId =
+        credential.source === "pi:anthropic"
+          ? claudePiContextId(credential.accessToken)
+          : claudeCredentialContextId();
       attempts.push({ source: credential.source, status: "failed" });
       try {
         const quota = await fetchOauthUsage(credential);
@@ -632,19 +642,22 @@ async function attemptClaudeQuota(
           status: "success",
         };
         attempts.push(oauthProfileAttempt(quota.identityError));
+        const report = successProvider({
+          provider: "claude",
+          label: "Claude",
+          source: "oauth",
+          plan: quota.plan,
+          account: quota.account,
+          windows: quota.windows,
+          refreshedAt: quota.refreshedAt,
+          sourcesTried: sourceNames(attempts),
+          attempts,
+        });
+        if (credential.source === "pi:anthropic")
+          stampClaudePiContext(report, credential.accessToken);
         return {
           kind: "success",
-          report: successProvider({
-            provider: "claude",
-            label: "Claude",
-            source: "oauth",
-            plan: quota.plan,
-            account: quota.account,
-            windows: quota.windows,
-            refreshedAt: quota.refreshedAt,
-            sourcesTried: sourceNames(attempts),
-            attempts,
-          }),
+          report,
         };
       } catch (error) {
         const failure = claudeFailureFor(error);
@@ -800,6 +813,7 @@ async function attemptClaudeQuota(
       (state) =>
         state.status === "skipped" && state.source.source === "keychain",
     ),
+    cacheContextId,
     definitiveFailureIsEnvOnly:
       failure === definitiveFailure && definitiveFailureIsEnv,
   };
