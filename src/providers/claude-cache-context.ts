@@ -19,15 +19,15 @@ export function stampClaudePiContext(
     .digest("hex");
 }
 
-export function claudeReadingContextId(
-  provider?: ProviderQuota,
-): string {
+export function claudeReadingContextId(provider?: ProviderQuota): string {
   const digest = provider
     ? (provider as ClaudeContextStampedQuota)[PI_CONTEXT_DIGEST]
     : undefined;
   if (!digest) return claudeCredentialContextId();
   return createHash("sha256")
-    .update(JSON.stringify(["claude-pi-v1", claudeCredentialContextId(), digest]))
+    .update(
+      JSON.stringify(["claude-pi-v1", claudeCredentialContextId(), digest]),
+    )
     .digest("hex");
 }
 

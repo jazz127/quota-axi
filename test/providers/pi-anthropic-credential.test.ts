@@ -92,7 +92,6 @@ describe("Pi Anthropic credential broker", () => {
       credentials: { accessToken: SECRET, expiresAtMs: expected },
     });
   });
-
 });
 
 function fixture(value: unknown): { path: string; before: string } {
