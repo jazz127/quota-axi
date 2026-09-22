@@ -1,17 +1,13 @@
 import { createHash } from "node:crypto";
 import { chmodSync, renameSync, writeFileSync } from "node:fs";
-import {
-  cacheFilePath,
-  claudeCredentialContextId,
-  ensurePrivateParent,
-  readJsonFile,
-} from "./lib/fs.js";
+import { cacheFilePath, ensurePrivateParent, readJsonFile } from "./lib/fs.js";
 import { kimiReadingContextId } from "./providers/kimi-cache-context.js";
 import { commandCodeReadingContextId } from "./providers/commandcode-cache-context.js";
 import { elevenLabsReadingContextId } from "./providers/elevenlabs-cache-context.js";
 import { miniMaxReadingContextId } from "./providers/minimax-cache-context.js";
 import { openRouterReadingContextId } from "./providers/openrouter-cache-context.js";
 import { isPiCodexSource } from "./providers/pi-codex-credential.js";
+import { claudeReadingContextId } from "./providers/claude-cache-context.js";
 import type {
   ProviderId,
   ProviderQuota,
@@ -91,7 +87,7 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
 const CONTEXT_SCOPED_PROVIDERS: Partial<
   Record<ProviderId, (provider: ProviderQuota) => string | undefined>
 > = {
-  claude: claudeCredentialContextId,
+  claude: claudeReadingContextId,
   kimi: kimiReadingContextId,
   commandcode: commandCodeReadingContextId,
   elevenlabs: elevenLabsReadingContextId,
