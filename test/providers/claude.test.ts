@@ -89,6 +89,23 @@ describe("Claude quota parsing", () => {
     ]);
   });
 
+  it("treats extra-usage utilization as percent used", () => {
+    const result = normalizeClaudeApiUsage({
+      extra_usage: {
+        is_enabled: true,
+        utilization: 42,
+      },
+    });
+
+    expect(result?.windows).toMatchObject([
+      {
+        id: "extra_usage",
+        percentUsed: 42,
+        percentRemaining: 58,
+      },
+    ]);
+  });
+
   it("treats a zero remaining vendor value as exhausted", () => {
     const result = normalizeClaudeApiUsage({
       five_hour: { utilization: 0 },
