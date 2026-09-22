@@ -660,20 +660,20 @@ Any bounding window without usable pace makes the **whole scope** unmeasurable: 
 
 ### Quota enums
 
-| Name                             | Values                                                                                                                   |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Provider statuses                | `fresh`, `stale`, `unavailable`, `auth_required`, `rate_limited`, or `error`                                             |
-| Provider sources                 | `oauth`, `pi:openai-codex`, `pi:openai-codex-*` sibling keys, `cli-rpc`, `cli`, `api`, `web`, `cache`, or `unavailable`  |
-| Current provider adapter sources | `oauth`, `pi:openai-codex`, `pi:openai-codex-*` sibling keys, `cli-rpc`, `cli`, `api`, `web`, `cache`, and `unavailable` |
-| Window kinds                     | `session`, `weekly`, `monthly`, `model`, `credits`, or `unknown`                                                         |
-| Window pace statuses             | `ahead`, `on_pace`, `behind`, or `unknown`                                                                               |
-| Effective pace statuses          | `ahead`, `on_pace`, `behind`, `mixed`, or `unknown`                                                                      |
-| Effective runway statuses        | `exhausted_now`, `projected_exhaustion`, `through_reset`, or `unknown`                                                   |
-| Effective selection statuses     | `known` or `unknown`                                                                                                     |
-| Pace projection confidence       | `early` or `established`                                                                                                 |
-| Pace cycle basis                 | `starts_at_resets_at` or `window_seconds`                                                                                |
-| Quota relationship statuses      | `known`, `partial`, or `unknown`                                                                                         |
-| Source attempt statuses          | `success`, `failed`, or `skipped`                                                                                        |
+| Name                             | Values                                                                                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider statuses                | `fresh`, `stale`, `unavailable`, `auth_required`, `rate_limited`, or `error`                                                             |
+| Provider sources                 | `oauth`, `pi:anthropic`, `pi:openai-codex`, `pi:openai-codex-*` sibling keys, `cli-rpc`, `cli`, `api`, `web`, `cache`, or `unavailable`  |
+| Current provider adapter sources | `oauth`, `pi:anthropic`, `pi:openai-codex`, `pi:openai-codex-*` sibling keys, `cli-rpc`, `cli`, `api`, `web`, `cache`, and `unavailable` |
+| Window kinds                     | `session`, `weekly`, `monthly`, `model`, `credits`, or `unknown`                                                                         |
+| Window pace statuses             | `ahead`, `on_pace`, `behind`, or `unknown`                                                                                               |
+| Effective pace statuses          | `ahead`, `on_pace`, `behind`, `mixed`, or `unknown`                                                                                      |
+| Effective runway statuses        | `exhausted_now`, `projected_exhaustion`, `through_reset`, or `unknown`                                                                   |
+| Effective selection statuses     | `known` or `unknown`                                                                                                                     |
+| Pace projection confidence       | `early` or `established`                                                                                                                 |
+| Pace cycle basis                 | `starts_at_resets_at` or `window_seconds`                                                                                                |
+| Quota relationship statuses      | `known`, `partial`, or `unknown`                                                                                                         |
+| Source attempt statuses          | `success`, `failed`, or `skipped`                                                                                                        |
 
 Source attempts can include `credentialPresent` when a source is not genuinely absent, including when a read failure prevents a more precise classification. They can also carry an explicit `degraded` flag that overrides the derived classification in either direction: `false` when a non-success attempt is not a broken credential source, and `true` when a skipped source was itself unreadable without establishing that a credential is present. Otherwise fresh reports derive `state.degradedSources` from failed attempts and skipped attempts with `credentialPresent`.
 
