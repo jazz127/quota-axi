@@ -195,7 +195,11 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
           remaining,
           percentUsed: limit > 0 ? clampPercent((used / limit) * 100) : 0,
           percentRemaining:
-            limit > 0 ? clampPercent((remaining / limit) * 100) : undefined,
+            limit > 0 || remaining <= 0
+              ? limit > 0
+                ? clampPercent((remaining / limit) * 100)
+                : 0
+              : undefined,
           windowSeconds: 86_400,
         });
       }

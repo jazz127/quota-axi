@@ -344,6 +344,46 @@ describe("OpenRouter provider", () => {
     });
   });
 
+  it("treats a zero free-model allowance as exhausted", async () => {
+    const report = await createOpenRouterAdapter({
+      credential: () => ({
+        status: "available",
+        key: KEY,
+        source: "env:OPENROUTER_API_KEY",
+      }),
+      fetch: async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.endsWith("/credits")
+              ? { total_credits: 0, total_usage: 0 }
+              : {
+                  data: {
+                    limit: null,
+                    free_model_daily_requests: {
+                      used: 0,
+                      limit: 0,
+                      remaining: 0,
+                    },
+                  },
+                },
+          ),
+          { headers: { "content-type": "application/json" } },
+        ),
+    }).fetchQuota(OPTIONS);
+
+    const interpreted = withQuotaSemantics(
+      report,
+      "2026-09-01T00:00:00.000Z",
+    );
+    expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "free_models",
+        effectivePercentRemaining: 0,
+        runway: expect.objectContaining({ status: "exhausted_now" }),
+      }),
+    ]);
+  });
+
   it("normalizes account credits and rejects malformed credit responses", () => {
     expect(
       normalizeOpenRouterCredits({ total_credits: 25, total_usage: 10 }),
