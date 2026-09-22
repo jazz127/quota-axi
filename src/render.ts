@@ -282,6 +282,15 @@ function providerStateRows(
         remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
       });
     }
+    if (provider.state.error) {
+      rows.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "credits",
+        detail: provider.state.error,
+        remedy: NONE,
+      });
+    }
     return rows;
   }
 

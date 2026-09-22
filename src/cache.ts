@@ -10,6 +10,7 @@ import { kimiReadingContextId } from "./providers/kimi-cache-context.js";
 import { commandCodeReadingContextId } from "./providers/commandcode-cache-context.js";
 import { elevenLabsReadingContextId } from "./providers/elevenlabs-cache-context.js";
 import { miniMaxReadingContextId } from "./providers/minimax-cache-context.js";
+import { openRouterReadingContextId } from "./providers/openrouter-cache-context.js";
 import { isPiCodexSource } from "./providers/pi-codex-credential.js";
 import type {
   ProviderId,
@@ -96,6 +97,7 @@ const CONTEXT_SCOPED_PROVIDERS: Partial<
   elevenlabs: elevenLabsReadingContextId,
   codex: codexStampContextId,
   minimax: miniMaxReadingContextId,
+  openrouter: openRouterReadingContextId,
 };
 
 /**
@@ -223,6 +225,13 @@ export function readCachedMiniMaxProvider(
   contextId: string,
 ): ProviderQuota | undefined {
   return readCachedProviderInContext("minimax", contextId);
+}
+
+/** OpenRouter cache reuse is bound to the source and credential that answered. */
+export function readCachedOpenRouterProvider(
+  contextId: string,
+): ProviderQuota | undefined {
+  return readCachedProviderInContext("openrouter", contextId);
 }
 
 /**
@@ -635,6 +644,9 @@ function normalizeCachedWindow(raw: unknown): QuotaWindow | undefined {
   assignString(result, "resetsAt", data.resetsAt);
   assignString(result, "resetText", data.resetText);
   assignNumber(result, "windowSeconds", data.windowSeconds);
+  assignNumber(result, "used", data.used);
+  assignNumber(result, "limit", data.limit);
+  assignNumber(result, "remaining", data.remaining);
   assignNumber(result, "spentUsd", data.spentUsd);
   assignNumber(result, "limitUsd", data.limitUsd);
   return result;

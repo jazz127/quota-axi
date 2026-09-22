@@ -1511,7 +1511,7 @@ describe("new provider public quota output", () => {
           identityStatus: "unverified",
         },
         credits: { remaining: 73.25, unit: "usd" },
-        windows: [
+        windows: expect.arrayContaining([
           expect.objectContaining({
             id: "key-limit",
             kind: "credits",
@@ -1520,7 +1520,7 @@ describe("new provider public quota output", () => {
             percentRemaining: 73.25,
             resetText: "Daily",
           }),
-        ],
+        ]),
         state: expect.objectContaining({ status: "fresh", stale: false }),
       }),
     ]);
