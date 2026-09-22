@@ -639,15 +639,17 @@ async function attemptClaudeQuota(
 
   let definitiveFailure: ClaudeFailure | undefined;
   let definitiveFailureIsEnv = false;
+  let definitiveFailureContextId: string | undefined;
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
+  let transientFailureContextId: string | undefined;
   let confirmedExpiryFailure: ClaudeFailure | undefined;
-  let cacheContextId = claudeCredentialContextId();
+  let confirmedExpiryFailureContextId: string | undefined;
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
       const credential = state.credentials;
-      cacheContextId =
+      const credentialContextId =
         credential.source === "pi:anthropic"
           ? claudePiContextId(credential.accessToken)
           : claudeCredentialContextId();
@@ -741,6 +743,7 @@ async function attemptClaudeQuota(
           if (!definitiveFailure) {
             definitiveFailure = failure;
             definitiveFailureIsEnv = credential.source === "env";
+            definitiveFailureContextId = credentialContextId;
           }
           // The env token names the account a live session actually uses, so
           // its own definitive rejection is a verdict on that session: it must
@@ -778,10 +781,12 @@ async function attemptClaudeQuota(
               // confirmations must not replace this first resolved verdict.
               transientFailure = confirmedExpiryFailure;
               transientFailureIsEnv = credential.source === "env";
+              confirmedExpiryFailureContextId = credentialContextId;
             }
           } else if (!expiryConfirmed) {
             transientFailure = failure.withUsageFetchFailure();
             transientFailureIsEnv = credential.source === "env";
+            transientFailureContextId = credentialContextId;
           }
           // The env token is an independent source the vendor merely resolves
           // first; its non-definitive failure must not withhold a still-untried
@@ -838,6 +843,14 @@ async function attemptClaudeQuota(
     transientFailure ??
     definitiveFailure ??
     new ClaudeFailure("Claude quota unavailable", { staleEligible: true });
+  let failureContextId =
+    failure === confirmedExpiryFailure
+      ? confirmedExpiryFailureContextId
+      : failure === transientFailure
+        ? transientFailureContextId
+        : failure === definitiveFailure
+          ? definitiveFailureContextId
+          : undefined;
   // A failed Keychain discovery/read never saw the live session. A 401 from a leftover
   // oauth-file sidecar is not evidence the user is signed out of Claude.
   // A refreshable soft expiry from that sidecar is no better evidence.
@@ -849,6 +862,7 @@ async function attemptClaudeQuota(
     failure = new ClaudeFailure(keychainFailure.source.error!, {
       staleEligible: true,
     });
+    failureContextId = claudeCredentialContextId();
   }
 
   return {
@@ -861,7 +875,7 @@ async function attemptClaudeQuota(
       (state) =>
         state.status === "skipped" && state.source.source === "keychain",
     ),
-    cacheContextId,
+    cacheContextId: failureContextId,
     definitiveFailureIsEnvOnly:
       failure === definitiveFailure && definitiveFailureIsEnv,
   };
