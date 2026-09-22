@@ -47,6 +47,11 @@ import {
 } from "./delegated-refresh.js";
 import { withUsageFetchFailure } from "./usage-fetch-failure.js";
 import { fetchClaudeNativeQuota } from "./claude-native-quota.js";
+import {
+  createPiAnthropicCredentialBroker,
+  PI_ANTHROPIC_SOURCE,
+  type PiAnthropicCredentialResolution,
+} from "./pi-anthropic-credential.js";
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_API_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -66,7 +71,7 @@ const FIVE_HOURS_SECONDS = 18_000;
 const SEVEN_DAYS_SECONDS = 604_800;
 
 type ClaudeCredentials = {
-  source: "env" | "oauth-file" | "keychain";
+  source: "env" | "oauth-file" | "keychain" | "pi:anthropic";
   accessToken: string;
   plan?: string;
   expiresAt?: number;
@@ -577,6 +582,13 @@ async function attemptClaudeQuota(
         )
           return 1;
       }
+      // Keep the established stored-source precedence stable when Pi also
+      // has an Anthropic entry; expiry metadata must not make the new sibling
+      // outrank Claude Code's own stores.
+      const storedOrder = ["keychain", "oauth-file", "pi:anthropic"];
+      const aOrder = storedOrder.indexOf(a.credentials.source);
+      const bOrder = storedOrder.indexOf(b.credentials.source);
+      if (aOrder !== bOrder) return aOrder - bOrder;
       return (b.credentials.expiresAt ?? 0) - (a.credentials.expiresAt ?? 0);
     });
 
@@ -1113,6 +1125,13 @@ async function readCredentialStates(
       ),
     );
 
+  const piAnthropicState = piAnthropicCredentialState(
+    await piAnthropicBroker.resolve(),
+  );
+  // Pi is an optional sibling store. Its absence must not add noise to the
+  // established Claude source/attempt report.
+  if (piAnthropicState.status !== "missing") states.push(piAnthropicState);
+
   if (process.platform === "darwin") {
     const selection = await listKeychainItem(locations);
     if (selection.status === "missing") {
@@ -1131,6 +1150,70 @@ async function readCredentialStates(
   }
 
   return states;
+}
+
+const piAnthropicBroker = createPiAnthropicCredentialBroker();
+
+function piAnthropicCredentialState(
+  resolution: PiAnthropicCredentialResolution,
+): CredentialState {
+  const source = PI_ANTHROPIC_SOURCE;
+  if (resolution.status === "available") {
+    return {
+      status: "available",
+      credentials: {
+        source,
+        accessToken: resolution.credentials.accessToken,
+        expiresAt: resolution.credentials.expiresAtMs,
+      },
+    };
+  }
+  if (resolution.status === "expired") {
+    if (!resolution.credentials) {
+      return {
+        status: "invalid",
+        source: { source, status: "invalid", error: "invalid_credential" },
+      };
+    }
+    return {
+      status: "expired",
+      credentials: {
+        source,
+        accessToken: resolution.credentials.accessToken,
+        expiresAt: resolution.credentials.expiresAtMs,
+      },
+      source: { source, status: "expired" },
+      refreshable: resolution.refreshable,
+    };
+  }
+  if (resolution.status === "missing") {
+    return { status: "missing", source: { source, status: "missing" } };
+  }
+  if (resolution.status === "invalid") {
+    return {
+      status: "invalid",
+      source: { source, status: "invalid", error: "invalid_credential" },
+    };
+  }
+  if (resolution.status === "unsupported") {
+    return {
+      status: "invalid",
+      source: {
+        source,
+        status: "invalid",
+        error: "unsupported_credential_type",
+      },
+    };
+  }
+  return {
+    status: "skipped",
+    degraded: true,
+    source: {
+      source,
+      status: "skipped",
+      error: "credential_resolution_failed",
+    },
+  };
 }
 
 async function readSkippedKeychainCredentialState(
