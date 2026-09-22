@@ -132,10 +132,14 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
       continue;
     }
 
+    let cached: ProviderQuota | undefined;
     try {
-      publishOpenRouterReadingContextId(
-        openRouterCacheContextId(resolution.source, resolution.key),
+      const contextId = openRouterCacheContextId(
+        resolution.source,
+        resolution.key,
       );
+      publishOpenRouterReadingContextId(contextId);
+      cached = dependencies.readCachedProvider(contextId);
       const payload = await requestKeyEndpoint(
         OPENROUTER_KEY_URL,
         resolution.key,
@@ -222,6 +226,8 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         windows,
         ...(accountCredits
           ? { credits: { remaining: accountCredits.remaining, unit: "usd" } }
+          : cached?.credits
+            ? { credits: cached.credits }
           : !normalized.unlimited && normalized.remaining !== undefined
             ? { credits: { remaining: normalized.remaining, unit: "usd" } }
             : {}),
@@ -244,9 +250,6 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         finalFailure = preferRemoteAuthFailure(finalFailure, code);
         continue;
       }
-      const cached = dependencies.readCachedProvider(
-        openRouterCacheContextId(resolution.source, resolution.key),
-      );
       if (cached) {
         return staleFromCache(
           cached,

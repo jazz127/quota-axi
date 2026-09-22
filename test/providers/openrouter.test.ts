@@ -413,6 +413,40 @@ describe("OpenRouter provider", () => {
     });
   });
 
+  it("keeps cached account credits when the credits read is refused", async () => {
+    const cached = {
+      provider: "openrouter" as const,
+      label: "OpenRouter",
+      source: "api" as const,
+      windows: [{ id: "usage", label: "usage", kind: "credits" as const }],
+      credits: { remaining: 8, unit: "usd" as const },
+      state: { status: "fresh" as const, stale: false, sourcesTried: ["api"] },
+    };
+    const report = await createOpenRouterAdapter({
+      credential: () => ({
+        status: "available",
+        key: KEY,
+        source: "env:OPENROUTER_API_KEY",
+      }),
+      fetch: async (url: string) =>
+        url.endsWith("/credits")
+          ? new Response(null, { status: 403 })
+          : new Response(
+              JSON.stringify({
+                data: { limit: 100, limit_remaining: 50 },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+      readCachedProvider: () => cached,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state.status).toBe("fresh");
+    expect(report.windows).toEqual([
+      expect.objectContaining({ id: "key-limit", percentRemaining: 50 }),
+    ]);
+    expect(report.credits).toEqual({ remaining: 8, unit: "usd" });
+  });
+
   it("normalizes account credits and rejects malformed credit responses", () => {
     expect(
       normalizeOpenRouterCredits({ total_credits: 25, total_usage: 10 }),
