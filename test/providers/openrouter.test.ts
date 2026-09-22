@@ -3,10 +3,8 @@ import {
   createOpenRouterAdapter,
   extractOpenRouterCredential,
   normalizeOpenRouterPayload,
-  normalizeOpenRouterCredits,
   resolveOpenRouterCredentials,
 } from "../../src/providers/openrouter.js";
-import { withQuotaSemantics } from "../../src/interpretation.js";
 
 const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
 const KEY = "synthetic-openrouter-key";
@@ -47,24 +45,21 @@ describe("OpenRouter provider", () => {
       source: "api",
       state: { status: "fresh", stale: false },
       credits: { remaining: 73.25, unit: "usd" },
+      account: { accountId: "personal", identityStatus: "unverified" },
       attempts: [{ source: "env:OPENROUTER_API_KEY", status: "success" }],
     });
-    expect(report.account).toBeUndefined();
-    expect(JSON.stringify(report)).not.toContain("personal");
-    expect(report.windows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "key-limit",
-          kind: "credits",
-          spentUsd: 26.75,
-          limitUsd: 100,
-          percentRemaining: 73.25,
-          resetText: "Daily",
-        }),
-      ]),
-    );
+    expect(report.windows).toEqual([
+      expect.objectContaining({
+        id: "key-limit",
+        kind: "credits",
+        spentUsd: 26.75,
+        limitUsd: 100,
+        percentRemaining: 73.25,
+        resetText: "Daily",
+      }),
+    ]);
     expect(JSON.stringify(report)).not.toContain(KEY);
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledOnce();
     const init = request.mock.calls[0][1];
     expect(new Headers(init?.headers).get("authorization")).toBe(
       "Bearer " + KEY,
@@ -110,10 +105,10 @@ describe("OpenRouter provider", () => {
       ],
       credits: { remaining: 40, unit: "usd" },
     });
-    expect(request).toHaveBeenCalledTimes(3);
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
-  it("reports a capless key's spend meters without inventing unlimited credit", async () => {
+  it("treats a null cap as unlimited and omits the window", async () => {
     const report = await createOpenRouterAdapter({
       credential: () => ({
         status: "available",
@@ -139,15 +134,9 @@ describe("OpenRouter provider", () => {
     }).fetchQuota(OPTIONS);
 
     expect(report).toMatchObject({
-      state: { error: "openrouter_no_spend_cap_credit_balance_not_reported" },
+      windows: [],
+      credits: { unlimited: true, unit: "usd" },
     });
-    expect(report.credits).toBeUndefined();
-    expect(report.windows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "usage", spentUsd: 10 }),
-        expect.objectContaining({ id: "usage_daily", spentUsd: 10 }),
-      ]),
-    );
   });
 
   it("omits credits when a finite cap lacks remaining balance", async () => {
@@ -165,9 +154,7 @@ describe("OpenRouter provider", () => {
     }).fetchQuota(OPTIONS);
 
     expect(report.state.status).toBe("fresh");
-    expect(report.windows).toEqual([
-      expect.objectContaining({ id: "usage", spentUsd: 10 }),
-    ]);
+    expect(report.windows).toEqual([]);
     expect(report.credits).toBeUndefined();
   });
 
@@ -231,226 +218,6 @@ describe("OpenRouter provider", () => {
     expect(() => normalizeOpenRouterPayload({ data: { usage: 10 } })).toThrow(
       "invalid_limit",
     );
-  });
-
-  it("reports funded capless and exhausted account credit separately from key meters", async () => {
-    const responses = [
-      { data: { limit: null, usage: 25.1 } },
-      { data: { total_credits: 25, total_usage: 25.01 } },
-    ];
-    const report = await createOpenRouterAdapter({
-      credential: () => ({
-        status: "available",
-        key: KEY,
-        source: "env:OPENROUTER_API_KEY",
-      }),
-      fetch: async () =>
-        new Response(JSON.stringify(responses.shift()), {
-          headers: { "content-type": "application/json" },
-        }),
-    }).fetchQuota(OPTIONS);
-    expect(report.credits?.unit).toBe("usd");
-    expect(report.credits?.remaining).toBeCloseTo(-0.01);
-    expect(report.windows).toEqual([
-      expect.objectContaining({ id: "usage", spentUsd: 25.1 }),
-    ]);
-  });
-
-  it("accepts the free-model daily bound and ignores a refused credits endpoint", async () => {
-    const request = vi.fn(async (url: string) => {
-      if (url.endsWith("/credits")) return new Response(null, { status: 403 });
-      return new Response(
-        JSON.stringify({
-          data: {
-            limit: null,
-            usage: 25.1,
-            free_model_daily_requests: {
-              used: 0,
-              limit: 1000,
-              remaining: 1000,
-            },
-          },
-        }),
-        { headers: { "content-type": "application/json" } },
-      );
-    });
-    const report = await createOpenRouterAdapter({
-      credential: () => ({
-        status: "available",
-        key: KEY,
-        source: "env:OPENROUTER_API_KEY",
-      }),
-      fetch: request,
-    }).fetchQuota(OPTIONS);
-    expect(report.state.status).toBe("fresh");
-    expect(report.credits).toBeUndefined();
-    expect(report.windows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "free-model-daily",
-          windowSeconds: 86400,
-          used: 0,
-          limit: 1000,
-          remaining: 1000,
-          percentRemaining: 100,
-        }),
-      ]),
-    );
-  });
-
-  it("bounds a dedicated free-model scope when the daily meter is exhausted", async () => {
-    const report = await createOpenRouterAdapter({
-      credential: () => ({
-        status: "available",
-        key: KEY,
-        source: "env:OPENROUTER_API_KEY",
-      }),
-      fetch: async (url: string) =>
-        new Response(
-          JSON.stringify(
-            url.endsWith("/credits")
-              ? { data: { total_credits: 0, total_usage: 0 } }
-              : {
-                  data: {
-                    limit: null,
-                    free_model_daily_requests: {
-                      used: 100,
-                      limit: 100,
-                      remaining: 0,
-                    },
-                  },
-                },
-          ),
-          { headers: { "content-type": "application/json" } },
-        ),
-      now: () => Date.parse("2026-09-01T00:00:00.000Z"),
-    }).fetchQuota(OPTIONS);
-
-    const interpreted = withQuotaSemantics(report, "2026-09-01T00:00:00.000Z");
-    expect(interpreted.quotaSemantics).toMatchObject({
-      status: "known",
-      effectiveAvailability: [
-        {
-          scope: "free_models",
-          status: "known",
-          effectivePercentRemaining: 0,
-          boundedBy: ["free-model-daily"],
-          limitingWindowIds: ["free-model-daily"],
-          runway: { status: "exhausted_now" },
-        },
-      ],
-    });
-  });
-
-  it("treats a zero free-model allowance as exhausted", async () => {
-    const report = await createOpenRouterAdapter({
-      credential: () => ({
-        status: "available",
-        key: KEY,
-        source: "env:OPENROUTER_API_KEY",
-      }),
-      fetch: async (url: string) =>
-        new Response(
-          JSON.stringify(
-            url.endsWith("/credits")
-              ? { data: { total_credits: 0, total_usage: 0 } }
-              : {
-                  data: {
-                    limit: null,
-                    free_model_daily_requests: {
-                      used: 0,
-                      limit: 0,
-                      remaining: 0,
-                    },
-                  },
-                },
-          ),
-          { headers: { "content-type": "application/json" } },
-        ),
-    }).fetchQuota(OPTIONS);
-
-    const interpreted = withQuotaSemantics(report, "2026-09-01T00:00:00.000Z");
-    expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([
-      expect.objectContaining({
-        scope: "free_models",
-        effectivePercentRemaining: 0,
-        runway: expect.objectContaining({ status: "exhausted_now" }),
-      }),
-    ]);
-  });
-
-  it("reuses a scoped cache when the key response is malformed", async () => {
-    const cached = {
-      provider: "openrouter" as const,
-      label: "OpenRouter",
-      source: "api" as const,
-      windows: [{ id: "usage", label: "usage", kind: "credits" as const }],
-      credits: { remaining: 8, unit: "usd" as const },
-      state: { status: "fresh" as const, stale: false, sourcesTried: ["api"] },
-    };
-    const report = await createOpenRouterAdapter({
-      credential: () => ({
-        status: "available",
-        key: KEY,
-        source: "env:OPENROUTER_API_KEY",
-      }),
-      fetch: async () =>
-        new Response(JSON.stringify({ data: { limit: "bad" } }), {
-          headers: { "content-type": "application/json" },
-        }),
-      readCachedProvider: () => cached,
-    }).fetchQuota(OPTIONS);
-
-    expect(report).toMatchObject({
-      source: "cache",
-      state: { status: "stale", stale: true, error: "invalid_limit" },
-      credits: { remaining: 8, unit: "usd" },
-    });
-  });
-
-  it("keeps cached account credits when the credits read is refused", async () => {
-    const cached = {
-      provider: "openrouter" as const,
-      label: "OpenRouter",
-      source: "api" as const,
-      windows: [{ id: "usage", label: "usage", kind: "credits" as const }],
-      credits: { remaining: 8, unit: "usd" as const },
-      state: { status: "fresh" as const, stale: false, sourcesTried: ["api"] },
-    };
-    const report = await createOpenRouterAdapter({
-      credential: () => ({
-        status: "available",
-        key: KEY,
-        source: "env:OPENROUTER_API_KEY",
-      }),
-      fetch: async (url: string) =>
-        url.endsWith("/credits")
-          ? new Response(null, { status: 403 })
-          : new Response(
-              JSON.stringify({
-                data: { limit: 100, limit_remaining: 50 },
-              }),
-              { headers: { "content-type": "application/json" } },
-            ),
-      readCachedProvider: () => cached,
-    }).fetchQuota(OPTIONS);
-
-    expect(report.state.status).toBe("fresh");
-    expect(report.windows).toEqual([
-      expect.objectContaining({ id: "key-limit", percentRemaining: 50 }),
-    ]);
-    expect(report.credits).toEqual({ remaining: 8, unit: "usd" });
-  });
-
-  it("normalizes account credits and rejects malformed credit responses", () => {
-    expect(
-      normalizeOpenRouterCredits({
-        data: { total_credits: 25, total_usage: 10 },
-      }),
-    ).toEqual({ remaining: 15 });
-    expect(() =>
-      normalizeOpenRouterCredits({ data: { total_credits: 25 } }),
-    ).toThrow("invalid_credits_payload");
   });
 
   it("reports unusable local credentials as auth_required", async () => {

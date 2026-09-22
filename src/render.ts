@@ -271,30 +271,7 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  if (measured) {
-    if (provider.provider === "openrouter") {
-      const credits = creditBalance(provider);
-      if (credits) {
-        rows.push({
-          ...providerColumns(provider),
-          scope: "all",
-          kind: "credits",
-          detail: `${credits}`,
-          remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
-        });
-      }
-      if (provider.state.error) {
-        rows.push({
-          ...providerColumns(provider),
-          scope: "all",
-          kind: "credits",
-          detail: provider.state.error,
-          remedy: NONE,
-        });
-      }
-    }
-    return rows;
-  }
+  if (measured) return rows;
 
   const authStatus = provider.state.authStatus;
   const suffix = authStatus ? ` (auth ${authStatus})` : "";
@@ -303,15 +280,6 @@ function providerStateRows(
     return rows;
   }
   const credits = creditBalance(provider);
-  if (provider.provider === "openrouter" && provider.state.error && !credits) {
-    rows.push({
-      ...providerColumns(provider),
-      scope: "all",
-      kind: "credits",
-      detail: provider.state.error,
-      remedy: NONE,
-    });
-  }
   if (credits) {
     rows.unshift({
       ...providerColumns(provider),
@@ -337,10 +305,9 @@ function providerStateRows(
 
 /**
  * A provider that reports a raw credit balance but no measurable scope has a
- * real number to state.
- * Naming it keeps the default report from hiding that evidence beside either
- * measurable or absent scopes, without inventing a percentage or a routing
- * bound from a balance that has no cap.
+ * real number to state. Naming it keeps the default report from contradicting
+ * the same run's `credits` with a bare `no_quota`, without inventing a
+ * percentage or a routing bound from a balance that has no cap.
  */
 function creditBalance(provider: ProviderQuota): string | undefined {
   const credits = provider.credits;

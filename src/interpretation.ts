@@ -175,12 +175,11 @@ function semanticsFor(
         "MiMo exposes local API authentication, but no first-party read-only quota endpoint is established, so model headroom remains unknown.",
       );
     case "deepseek":
+    case "openrouter":
       return unknownSemantics(
         provider.windows,
         `${provider.label ?? provider.provider} reports a credit balance, not a usage window. quota-axi exposes the raw balance but does not infer an effective remaining percentage.`,
       );
-    case "openrouter":
-      return openRouterSemantics(provider.windows, generatedAt);
     case "elevenlabs":
       return elevenLabsSemantics(provider.windows, generatedAt);
   }
@@ -877,29 +876,4 @@ function unknownSemantics(
     effectiveAvailability: [],
     unresolvedWindowIds: windows.map(({ id }) => id),
   };
-}
-
-function openRouterSemantics(
-  windows: QuotaWindow[],
-  generatedAt: string,
-): QuotaSemantics {
-  const freeModelDaily = windows.filter(({ id }) => id === "free-model-daily");
-  const unresolved = windows.filter(({ id }) => id !== "free-model-daily");
-  const effectiveAvailability =
-    freeModelDaily.length > 0
-      ? [availability("free_models", freeModelDaily, generatedAt)]
-      : [];
-  if (unresolved.length > 0) {
-    return {
-      status: effectiveAvailability.length > 0 ? "partial" : "unknown",
-      description:
-        "OpenRouter's free-model daily request meter bounds free-model requests. Other reported meters remain unresolved because their effective scope is not established.",
-      effectiveAvailability,
-      unresolvedWindowIds: unresolved.map(({ id }) => id),
-    };
-  }
-  return knownSemantics(
-    effectiveAvailability,
-    "OpenRouter's free-model daily request meter bounds free-model requests.",
-  );
 }

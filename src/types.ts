@@ -206,10 +206,6 @@ export type QuotaWindow = {
   resetsAt?: string;
   resetText?: string;
   windowSeconds?: number;
-  /** Provider-reported non-USD counters, when the unit is not dollars. */
-  used?: number;
-  limit?: number;
-  remaining?: number;
   spentUsd?: number;
   limitUsd?: number;
   /** Cycle-average pace relative to generatedAt. Not cached. */

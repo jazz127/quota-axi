@@ -1,11 +1,5 @@
 import { deleteCachedProvider as deleteCachedProviderFromDisk } from "../cache.js";
-import { readCachedOpenRouterProvider } from "../cache.js";
 import { providerFetch } from "../lib/http.js";
-import {
-  clearOpenRouterReadingContextId,
-  openRouterCacheContextId,
-  publishOpenRouterReadingContextId,
-} from "./openrouter-cache-context.js";
 import type {
   AuthProviderReport,
   ProviderAdapter,
@@ -13,12 +7,7 @@ import type {
   QuotaWindow,
   SourceAttempt,
 } from "../types.js";
-import {
-  failedProvider,
-  sourceNames,
-  staleFromCache,
-  successProvider,
-} from "./common.js";
+import { failedProvider, sourceNames, successProvider } from "./common.js";
 import {
   credentialCandidates,
   type EnvPiCredentialResolution,
@@ -37,7 +26,6 @@ import {
 } from "./env-pi-credential.js";
 
 export const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
-export const OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits";
 export const OPENROUTER_PI_SOURCE = "pi:openrouter";
 export const OPENROUTER_ENV_SOURCE = "env:OPENROUTER_API_KEY";
 
@@ -54,25 +42,18 @@ const OPENROUTER_SOURCES: EnvPiCredentialSources = {
 type Dependencies = {
   credential: () => EnvPiCredentialResolution | EnvPiCredentialResolution[];
   fetch: typeof providerFetch;
-  readCachedProvider: typeof readCachedOpenRouterProvider;
   deleteCachedProvider: typeof deleteCachedProviderFromDisk;
   now: () => number;
   deadlineMs: number;
 };
 
 export type NormalizedOpenRouterPayload = {
+  label?: string;
   limit?: number;
   remaining?: number;
   period?: string;
   unlimited: boolean;
-  usage?: {
-    id: "usage" | "usage_daily" | "usage_weekly" | "usage_monthly";
-    value: number;
-  }[];
-  freeModelDaily?: { used: number; limit: number; remaining: number };
 };
-
-type NormalizedOpenRouterCredits = { remaining: number };
 
 export function resolveOpenRouterCredentials(
   environment: Readonly<Record<string, string | undefined>> = process.env,
@@ -99,7 +80,6 @@ export function createOpenRouterAdapter(
   const dependencies: Dependencies = {
     credential: () => resolveOpenRouterCredentials(),
     fetch: providerFetch,
-    readCachedProvider: readCachedOpenRouterProvider,
     deleteCachedProvider: deleteCachedProviderFromDisk,
     now: Date.now,
     deadlineMs: DEADLINE_MS,
@@ -117,7 +97,6 @@ export const openrouterAdapter = createOpenRouterAdapter();
 
 async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
   const attempts: SourceAttempt[] = [];
-  clearOpenRouterReadingContextId();
   let finalFailure: KeyCredentialFailure | undefined;
   for (const resolution of credentialCandidates(dependencies.credential)) {
     if (resolution.status !== "available") {
@@ -131,14 +110,7 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
       continue;
     }
 
-    let cached: ProviderQuota | undefined;
     try {
-      const contextId = openRouterCacheContextId(
-        resolution.source,
-        resolution.key,
-      );
-      publishOpenRouterReadingContextId(contextId);
-      cached = dependencies.readCachedProvider(contextId);
       const payload = await requestKeyEndpoint(
         OPENROUTER_KEY_URL,
         resolution.key,
@@ -146,19 +118,6 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         dependencies.deadlineMs,
       );
       const normalized = normalizeOpenRouterPayload(payload);
-      let accountCredits: NormalizedOpenRouterCredits | undefined;
-      try {
-        accountCredits = normalizeOpenRouterCredits(
-          await requestKeyEndpoint(
-            OPENROUTER_CREDITS_URL,
-            resolution.key,
-            dependencies.fetch,
-            dependencies.deadlineMs,
-          ),
-        );
-      } catch {
-        // Credits are optional and may be refused for an otherwise usable key.
-      }
       attempts.push({ source: resolution.source, status: "success" });
 
       const windows: QuotaWindow[] = [];
@@ -187,54 +146,23 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         }
       }
 
-      for (const metric of normalized.usage ?? []) {
-        windows.push({
-          id: metric.id,
-          label: `OpenRouter ${metric.id.replaceAll("_", " ")}`,
-          kind: "credits",
-          spentUsd: metric.value,
-        });
-      }
-      if (normalized.freeModelDaily) {
-        const { used, limit, remaining } = normalized.freeModelDaily;
-        windows.push({
-          id: "free-model-daily",
-          label: "Free model daily requests",
-          kind: "unknown",
-          used,
-          limit,
-          remaining,
-          percentUsed: limit > 0 ? clampPercent((used / limit) * 100) : 0,
-          percentRemaining:
-            limit > 0 || remaining <= 0
-              ? limit > 0
-                ? clampPercent((remaining / limit) * 100)
-                : 0
-              : undefined,
-          windowSeconds: 86_400,
-        });
-      }
-
-      const report = successProvider({
+      return successProvider({
         provider: "openrouter",
         label: LABEL,
         source: "api",
+        account: normalized.label
+          ? { accountId: normalized.label, identityStatus: "unverified" }
+          : undefined,
         windows,
-        ...(accountCredits
-          ? { credits: { remaining: accountCredits.remaining, unit: "usd" } }
-          : cached?.credits
-            ? { credits: cached.credits }
-            : !normalized.unlimited && normalized.remaining !== undefined
-              ? { credits: { remaining: normalized.remaining, unit: "usd" } }
-              : {}),
+        ...(normalized.unlimited
+          ? { credits: { unlimited: true, unit: "usd" } }
+          : normalized.remaining !== undefined
+            ? { credits: { remaining: normalized.remaining, unit: "usd" } }
+            : {}),
         refreshedAt: new Date(dependencies.now()).toISOString(),
         sourcesTried: sourceNames(attempts),
         attempts,
       });
-      if (normalized.unlimited && !accountCredits && !cached?.credits)
-        report.state.error =
-          "openrouter_no_spend_cap_credit_balance_not_reported";
-      return report;
     } catch (error) {
       const code = errorCode(error);
       attempts.push({
@@ -245,9 +173,6 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
       if (code === "provider_auth_rejected") {
         finalFailure = preferRemoteAuthFailure(finalFailure, code);
         continue;
-      }
-      if (cached) {
-        return staleFromCache(cached, code, sourceNames(attempts), attempts);
       }
       return failedProvider({
         provider: "openrouter",
@@ -307,55 +232,15 @@ export function normalizeOpenRouterPayload(
   if (!unlimited && limit === undefined) throw new Error("invalid_limit");
   const remaining = asFiniteNumber(data.limit_remaining);
   const period = asString(data.limit_reset);
-  const usage = (
-    ["usage", "usage_daily", "usage_weekly", "usage_monthly"] as const
-  )
-    .map((id) => ({ id, value: asFiniteNumber(data[id]) }))
-    .filter(
-      (metric): metric is { id: (typeof metric)["id"]; value: number } =>
-        metric.value !== undefined,
-    );
-  const free = objectValue(data.free_model_daily_requests);
-  const freeModelDaily = free
-    ? {
-        used: asNonnegativeNumber(free.used),
-        limit: asNonnegativeNumber(free.limit),
-        remaining: asNonnegativeNumber(free.remaining),
-      }
-    : undefined;
+  const label = asString(data.label);
 
   return {
+    label,
     limit,
     remaining,
     period,
     unlimited,
-    ...(usage.length > 0 ? { usage } : {}),
-    ...(freeModelDaily?.used !== undefined &&
-    freeModelDaily.limit !== undefined &&
-    freeModelDaily.remaining !== undefined
-      ? {
-          freeModelDaily: freeModelDaily as {
-            used: number;
-            limit: number;
-            remaining: number;
-          },
-        }
-      : {}),
   };
-}
-
-export function normalizeOpenRouterCredits(
-  raw: unknown,
-): NormalizedOpenRouterCredits {
-  const root = objectValue(raw);
-  if (!root) throw new Error("invalid_credits_payload");
-  const data = objectValue(root.data);
-  if (!data) throw new Error("missing_data");
-  const remaining = asFiniteNumber(data.total_credits);
-  const usage = asFiniteNumber(data.total_usage);
-  if (remaining === undefined || usage === undefined)
-    throw new Error("invalid_credits_payload");
-  return { remaining: remaining - usage };
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
