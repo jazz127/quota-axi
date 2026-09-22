@@ -883,12 +883,8 @@ function openRouterSemantics(
   windows: QuotaWindow[],
   generatedAt: string,
 ): QuotaSemantics {
-  const freeModelDaily = windows.filter(
-    ({ id }) => id === "free-model-daily",
-  );
-  const unresolved = windows.filter(
-    ({ id }) => id !== "free-model-daily",
-  );
+  const freeModelDaily = windows.filter(({ id }) => id === "free-model-daily");
+  const unresolved = windows.filter(({ id }) => id !== "free-model-daily");
   const effectiveAvailability =
     freeModelDaily.length > 0
       ? [availability("free_models", freeModelDaily, generatedAt)]

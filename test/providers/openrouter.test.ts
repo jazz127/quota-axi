@@ -325,10 +325,7 @@ describe("OpenRouter provider", () => {
       now: () => Date.parse("2026-09-01T00:00:00.000Z"),
     }).fetchQuota(OPTIONS);
 
-    const interpreted = withQuotaSemantics(
-      report,
-      "2026-09-01T00:00:00.000Z",
-    );
+    const interpreted = withQuotaSemantics(report, "2026-09-01T00:00:00.000Z");
     expect(interpreted.quotaSemantics).toMatchObject({
       status: "known",
       effectiveAvailability: [
@@ -371,10 +368,7 @@ describe("OpenRouter provider", () => {
         ),
     }).fetchQuota(OPTIONS);
 
-    const interpreted = withQuotaSemantics(
-      report,
-      "2026-09-01T00:00:00.000Z",
-    );
+    const interpreted = withQuotaSemantics(report, "2026-09-01T00:00:00.000Z");
     expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([
       expect.objectContaining({
         scope: "free_models",

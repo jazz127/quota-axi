@@ -228,9 +228,9 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
           ? { credits: { remaining: accountCredits.remaining, unit: "usd" } }
           : cached?.credits
             ? { credits: cached.credits }
-          : !normalized.unlimited && normalized.remaining !== undefined
-            ? { credits: { remaining: normalized.remaining, unit: "usd" } }
-            : {}),
+            : !normalized.unlimited && normalized.remaining !== undefined
+              ? { credits: { remaining: normalized.remaining, unit: "usd" } }
+              : {}),
         refreshedAt: new Date(dependencies.now()).toISOString(),
         sourcesTried: sourceNames(attempts),
         attempts,
@@ -251,12 +251,7 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         continue;
       }
       if (cached) {
-        return staleFromCache(
-          cached,
-          code,
-          sourceNames(attempts),
-          attempts,
-        );
+        return staleFromCache(cached, code, sourceNames(attempts), attempts);
       }
       return failedProvider({
         provider: "openrouter",

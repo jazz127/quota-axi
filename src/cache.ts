@@ -273,16 +273,13 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
     ]),
   );
   const preservesOpenRouter = (provider: ProviderQuota): boolean => {
-    if (
-      provider.provider !== "openrouter" ||
-      provider.state.status !== "fresh"
-    )
+    if (provider.provider !== "openrouter" || provider.state.status !== "fresh")
       return false;
     const existing = existingByProvider.get(cacheIdentity(provider));
     return Boolean(
       existing?.snapshot.credits !== undefined &&
-        existing.credentialContextId !== undefined &&
-        existing.credentialContextId === openRouterReadingContextId(),
+      existing.credentialContextId !== undefined &&
+      existing.credentialContextId === openRouterReadingContextId(),
     );
   };
   const clearProviders = new Set(
