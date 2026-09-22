@@ -38,10 +38,6 @@ describe("Pi Anthropic credential broker", () => {
       status: "available",
       credentials: { accessToken: SECRET, expiresAtMs: FUTURE },
     });
-    await expect(broker.inspect()).resolves.toEqual({
-      path,
-      status: "available",
-    });
     expect(readFileSync(path, "utf8")).toBe(before);
   });
 
@@ -80,13 +76,6 @@ describe("Pi Anthropic credential broker", () => {
       refreshable: true,
       credentials: { accessToken: SECRET, expiresAtMs: NOW - 1 },
     });
-    const inspection = await broker.inspect();
-    expect(inspection).toEqual({
-      path,
-      status: "expired",
-      refreshable: true,
-      error: "credentials_expired_refreshable",
-    });
   });
 
   it.each([
@@ -104,20 +93,6 @@ describe("Pi Anthropic credential broker", () => {
     });
   });
 
-  it("never exposes credential material in inspection output", async () => {
-    const { path } = fixture({
-      anthropic: {
-        type: "oauth",
-        access: SECRET,
-        refresh: REFRESH,
-        expires: NOW - 1,
-      },
-    });
-    const inspection = await brokerFor(path).inspect();
-    const output = JSON.stringify(inspection);
-    expect(output).not.toContain(SECRET);
-    expect(output).not.toContain(REFRESH);
-  });
 });
 
 function fixture(value: unknown): { path: string; before: string } {

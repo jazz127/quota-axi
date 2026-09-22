@@ -28,16 +28,8 @@ export type PiAnthropicCredentialResolution =
     }
   | { status: "error" };
 
-export type PiAnthropicCredentialInspection = {
-  path: string;
-  status: PiAnthropicCredentialResolution["status"];
-  refreshable?: boolean;
-  error?: string;
-};
-
 export type PiAnthropicCredentialBroker = {
   resolve(): Promise<PiAnthropicCredentialResolution>;
-  inspect(): Promise<PiAnthropicCredentialInspection>;
 };
 
 type BrokerDependencies = {
@@ -60,34 +52,6 @@ export function createPiAnthropicCredentialBroker(
 
   return {
     resolve: () => resolveCredential(dependencies),
-    inspect: async () => {
-      const resolution = await resolveCredential(dependencies);
-      const path = authFilePath(dependencies);
-      if (resolution.status === "expired") {
-        return {
-          path,
-          status: "expired",
-          refreshable: resolution.refreshable,
-          error: resolution.refreshable
-            ? "credentials_expired_refreshable"
-            : "credentials_expired",
-        };
-      }
-      if (resolution.status === "unsupported") {
-        return {
-          path,
-          status: "unsupported",
-          error: "unsupported_credential_type",
-        };
-      }
-      if (resolution.status === "invalid") {
-        return { path, status: "invalid", error: "invalid_credential" };
-      }
-      if (resolution.status === "error") {
-        return { path, status: "error", error: "credential_resolution_failed" };
-      }
-      return { path, status: resolution.status };
-    },
   };
 }
 
