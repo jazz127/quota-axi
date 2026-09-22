@@ -6,6 +6,7 @@ import {
   normalizeOpenRouterCredits,
   resolveOpenRouterCredentials,
 } from "../../src/providers/openrouter.js";
+import { withQuotaSemantics } from "../../src/interpretation.js";
 
 const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
 const KEY = "synthetic-openrouter-key";
@@ -294,6 +295,53 @@ describe("OpenRouter provider", () => {
         }),
       ]),
     );
+  });
+
+  it("bounds a dedicated free-model scope when the daily meter is exhausted", async () => {
+    const report = await createOpenRouterAdapter({
+      credential: () => ({
+        status: "available",
+        key: KEY,
+        source: "env:OPENROUTER_API_KEY",
+      }),
+      fetch: async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.endsWith("/credits")
+              ? { total_credits: 0, total_usage: 0 }
+              : {
+                  data: {
+                    limit: null,
+                    free_model_daily_requests: {
+                      used: 100,
+                      limit: 100,
+                      remaining: 0,
+                    },
+                  },
+                },
+          ),
+          { headers: { "content-type": "application/json" } },
+        ),
+      now: () => Date.parse("2026-09-01T00:00:00.000Z"),
+    }).fetchQuota(OPTIONS);
+
+    const interpreted = withQuotaSemantics(
+      report,
+      "2026-09-01T00:00:00.000Z",
+    );
+    expect(interpreted.quotaSemantics).toMatchObject({
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "free_models",
+          status: "known",
+          effectivePercentRemaining: 0,
+          boundedBy: ["free-model-daily"],
+          limitingWindowIds: ["free-model-daily"],
+          runway: { status: "exhausted_now" },
+        },
+      ],
+    });
   });
 
   it("normalizes account credits and rejects malformed credit responses", () => {
