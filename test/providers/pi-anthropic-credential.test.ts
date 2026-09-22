@@ -89,6 +89,21 @@ describe("Pi Anthropic credential broker", () => {
     });
   });
 
+  it.each([
+    [FUTURE / 1000, FUTURE],
+    [String(FUTURE), FUTURE],
+    [new Date(FUTURE).toISOString(), FUTURE],
+  ])("normalizes OAuth expiry %s", async (expires, expected) => {
+    const { path } = fixture({
+      anthropic: { type: "oauth", access: SECRET, expires },
+    });
+
+    await expect(brokerFor(path).resolve()).resolves.toEqual({
+      status: "available",
+      credentials: { accessToken: SECRET, expiresAtMs: expected },
+    });
+  });
+
   it("never exposes credential material in inspection output", async () => {
     const { path } = fixture({
       anthropic: {

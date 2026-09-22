@@ -8,7 +8,6 @@ export const PI_ANTHROPIC_PROVIDER_ID = "anthropic";
 export const PI_ANTHROPIC_SOURCE =
   "pi:anthropic" as const satisfies ProviderSource;
 const AUTH_FILE_LIMIT_BYTES = 64 * 1024;
-const MINIMUM_MILLISECOND_EPOCH = 1_000_000_000_000;
 
 export type PiAnthropicCredentials = {
   /** Present only for an in-memory quota probe; never log, render, or cache. */
@@ -128,7 +127,7 @@ async function resolveCredential(
   const accessToken = usableLiteral(entry.access);
   if (accessToken === undefined) return { status: "invalid" };
   const hasExpiry = Object.hasOwn(entry, "expires");
-  const expiresAtMs = millisecondTimestamp(entry.expires);
+  const expiresAtMs = timestampMs(entry.expires);
   if (hasExpiry && expiresAtMs === undefined) return { status: "invalid" };
   const credentials = { accessToken, expiresAtMs };
   if (expiresAtMs !== undefined && expiresAtMs <= dependencies.now()) {
@@ -161,12 +160,19 @@ function usableLiteral(value: unknown): string | undefined {
   return value;
 }
 
-function millisecondTimestamp(value: unknown): number | undefined {
-  return typeof value === "number" &&
-    Number.isSafeInteger(value) &&
-    value >= MINIMUM_MILLISECOND_EPOCH
-    ? value
-    : undefined;
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber)) {
+      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return undefined;
 }
 
 async function readBoundedFile(
