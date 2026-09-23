@@ -1146,6 +1146,26 @@ function accountCardLines(
   provider: ProviderQuota,
   border: "border" | "borderDim",
 ): Line[] {
+  if (provider.provider === "codex") {
+    const identity = provider.account?.label ?? provider.accountKey ?? "unknown";
+    const origin = provider.account?.credentialHome
+      ? `home ${provider.account.credentialHome}`
+      : `source ${provider.account?.credentialSource ?? provider.source ?? "unknown"}`;
+    return [
+      interior(
+        [
+          {
+            text: truncate(
+              `   account ${identity} · ${origin} · selected account`,
+              CARD_INTERIOR,
+            ),
+            style: "dim",
+          },
+        ],
+        border,
+      ),
+    ];
+  }
   const accountKey = configuredAccountKey(provider);
   if (!accountKey) return [];
   return [

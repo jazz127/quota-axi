@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { encode } from "@toon-format/toon";
 import { quotaHelpLines } from "./advice.js";
 import { accountColumns } from "./providers/accounts.js";
@@ -123,6 +124,9 @@ export function renderQuotaToon(
  */
 function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
   const blocks: ProviderBlocks = { quota: [], exhaustion: [], attention: [] };
+  const codexAccountCount = response.providers.filter(
+    (provider) => provider.provider === "codex",
+  ).length;
   for (const provider of response.providers) {
     const scopes = provider.quotaSemantics?.effectiveAvailability ?? [];
     const scopeAttention: AttentionRow[] = [];
@@ -160,10 +164,34 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
     blocks.attention.push(
       ...providerAttention(provider, measured, scopeAttention.length),
     );
+    if (provider.provider === "codex") {
+      const identity = codexAccountLabel(provider);
+      const location = provider.account?.credentialHome
+        ? `home ${collapseHome(provider.account.credentialHome)}`
+        : `source ${provider.account?.credentialSource ?? provider.source ?? "unknown"}`;
+      blocks.attention.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "account_source",
+        detail: `${identity} · ${location} · ${codexAccountCount === 1 ? "single Codex account shown" : `Codex account ${provider.accountKey ?? "default"} of ${codexAccountCount} shown`}`,
+        remedy: NONE,
+      });
+    }
     blocks.attention.push(...shareRows(provider));
     blocks.attention.push(...scopeAttention);
   }
   return blocks;
+}
+
+function codexAccountLabel(provider: ProviderQuota): string {
+  const label =
+    provider.account?.label ??
+    (provider.account?.accountId
+      ? `#${createHash("sha256").update(provider.account.accountId).digest("hex").slice(0, 8)}`
+      : undefined) ??
+    provider.accountKey ??
+    provider.accountKeys?.[0];
+  return label ? `account ${label}` : "account identity unavailable";
 }
 
 function quotaRow(
@@ -596,7 +624,19 @@ export function redactedResponse(
     ...response,
     providers: response.providers.map((provider) => ({
       ...provider,
-      account: undefined,
+      account:
+        provider.provider === "codex"
+          ? {
+              label: provider.account?.label,
+              ...(provider.account?.accountId
+                ? {
+                    label: `#${createHash("sha256").update(provider.account.accountId).digest("hex").slice(0, 8)}`,
+                  }
+                : {}),
+              credentialHome: provider.account?.credentialHome,
+              credentialSource: provider.account?.credentialSource,
+            }
+          : undefined,
       attempts: undefined,
     })),
   };

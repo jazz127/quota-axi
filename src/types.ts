@@ -298,9 +298,14 @@ export type ProviderQuota = {
   source?: ProviderSource;
   plan?: string;
   account?: {
+    /** Stable non-secret account label for ordinary Codex output. */
+    label?: string;
     email?: string;
     organization?: string;
     accountId?: string;
+    /** Safe locator for the local credential home used by this reading. */
+    credentialHome?: string;
+    credentialSource?: ProviderSource;
     identityStatus?: "verified" | "unverified";
   };
   windows: QuotaWindow[];

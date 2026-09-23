@@ -376,6 +376,7 @@ CODEX_HOME=/path/to/codex-profile quota-axi --provider codex --profile-only --fu
 A normal invocation reports every Codex ChatGPT subscription it can discover from sibling entries in one Pi `auth.json`.
 It keeps each account's quota windows, resets, plan, effective availability, runway, and `spendPriority` separate.
 Each account gets its own TUI card, naming its key on an `account <key>` line under the card title, including accounts whose quota cannot be read.
+Every Codex reading also names its source. The default report uses a stable redacted account label and the selected credential home (or the answering Pi/CLI source); a single-account report says that it shows one Codex account. `--full --json` retains the vendor account identity and the source details.
 The `default` key an expanded report fills in for single-account providers is a schema artefact, so the TUI leaves it out of both the card and the `--full` footer; TOON and JSON still publish it.
 
 ```sh
