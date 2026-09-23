@@ -625,7 +625,7 @@ export function redactedResponse(
     providers: response.providers.map((provider) => ({
       ...provider,
       account:
-        provider.provider === "codex"
+        provider.provider === "codex" && provider.account
           ? {
               label: provider.account?.label,
               ...(provider.account?.accountId
@@ -633,8 +633,11 @@ export function redactedResponse(
                     label: `#${createHash("sha256").update(provider.account.accountId).digest("hex").slice(0, 8)}`,
                   }
                 : {}),
-              credentialHome: provider.account?.credentialHome,
-              credentialSource: provider.account?.credentialSource,
+              credentialHome: provider.account?.credentialHome
+                ? collapseHome(provider.account.credentialHome)
+                : undefined,
+              credentialSource:
+                provider.account?.credentialSource ?? provider.source,
             }
           : undefined,
       attempts: undefined,

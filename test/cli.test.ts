@@ -574,7 +574,7 @@ describe("CLI quota rendering", () => {
     // The remedy rides the stale provider's `attention[]` row, and the stale
     // scope gets no `quota[]` row at all.
     expect(output).toContain(
-      "attention[3]{provider,scope,kind,detail,remedy}:",
+      "attention[4]{provider,scope,kind,detail,remedy}:",
     );
     expect(output).toContain(
       'claude,all,stale,"last refreshed 2026-07-06T18:10:00Z · keychain_prompt_required · reason keychain_access_required",quota-axi --allow-keychain-prompt',
@@ -590,7 +590,7 @@ describe("CLI quota rendering", () => {
     expect(output).toContain(
       "codex,all_models,unmeasurable,five_hour blocks spendPriority,none",
     );
-    expect(output).not.toContain("codex,all,");
+    expect(output).not.toContain("codex,all,stale,");
   });
 
   it("advertises the inference opt-in when the env token's scope denial is the final Claude failure", async () => {
@@ -1147,7 +1147,7 @@ describe("CLI quota rendering", () => {
     expect(compact).toContain(
       'codex,all_models,258720,"2026-07-18T11:52:00.000Z",weekly',
     );
-    expect(compact).toContain("attention[0]:");
+    expect(compact).toContain("attention[1]{provider,scope,kind,detail,remedy}:");
     expect(compact).not.toContain("windows[");
     expect(compact).not.toContain("worstReserve");
 
@@ -1819,7 +1819,12 @@ describe("new provider public quota output", () => {
     process.env.WINDSURF_API_KEY = key;
     const payload = JSON.parse(
       readFileSync("test/fixtures/devin/pro.json", "utf8"),
-    ) as unknown;
+    ) as {
+      userStatus: { planStatus: { dailyQuotaResetAtUnix: string } };
+    };
+    // Keep the daily window live at the captured real clock as well as the
+    // fake report clock installed above.
+    payload.userStatus.planStatus.dailyQuotaResetAtUnix = "1790755200";
     const fetch = vi.fn(async () => {
       return new Response(JSON.stringify(payload), {
         status: 200,
@@ -2008,7 +2013,11 @@ describe("default TOON decision blocks", () => {
     );
     expect(output).not.toContain("elevenlabs");
     expect(toonRows(output, "attention").map((row) => row[0])).toEqual(
-      Object.keys(PROVIDERS).filter((id) => id !== "elevenlabs"),
+      [
+        ...Object.keys(PROVIDERS)
+          .filter((id) => id !== "elevenlabs")
+          .flatMap((id) => (id === "codex" ? [id, id] : [id])),
+      ],
     );
     expect(process.exitCode).toBeUndefined();
   });

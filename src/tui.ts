@@ -2,6 +2,7 @@ import {
   providerPresence,
   type ProviderPresence,
 } from "./lib/source-attempts.js";
+import { collapseHome } from "./lib/fs.js";
 import type {
   EffectiveAvailability,
   ProviderId,
@@ -1147,9 +1148,12 @@ function accountCardLines(
   border: "border" | "borderDim",
 ): Line[] {
   if (provider.provider === "codex") {
-    const identity = provider.account?.label ?? provider.accountKey ?? "unknown";
+    const label = provider.account?.label;
+    const identity = provider.accountKey
+      ? `${provider.accountKey}${label && label !== provider.accountKey ? ` (${label})` : ""}`
+      : label ?? "unknown";
     const origin = provider.account?.credentialHome
-      ? `home ${provider.account.credentialHome}`
+      ? `home ${collapseHome(provider.account.credentialHome)}`
       : `source ${provider.account?.credentialSource ?? provider.source ?? "unknown"}`;
     return [
       interior(
