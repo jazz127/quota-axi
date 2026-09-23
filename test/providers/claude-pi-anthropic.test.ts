@@ -27,7 +27,11 @@ afterEach(() => {
 
 describe("Claude Pi Anthropic adapter", () => {
   it("uses a healthy Pi Anthropic OAuth entry as the quota source", async () => {
-    writePi({ type: "oauth", access: PI_TOKEN, expires: Date.now() + 3_600_000 });
+    writePi({
+      type: "oauth",
+      access: PI_TOKEN,
+      expires: Date.now() + 3_600_000,
+    });
     mockAnthropic({ token: PI_TOKEN });
 
     const { fetchQuota } = await import("../../src/providers/claude.js");
@@ -41,16 +45,22 @@ describe("Claude Pi Anthropic adapter", () => {
   });
 
   it("does not use a Pi cache snapshot when an earlier OAuth failure wins", async () => {
-    writeClaude({ accessToken: OAUTH_TOKEN, expiresAt: Date.now() + 3_600_000 });
-    writePi({ type: "oauth", access: PI_TOKEN, expires: Date.now() + 3_600_000 });
+    writeClaude({
+      accessToken: OAUTH_TOKEN,
+      expiresAt: Date.now() + 3_600_000,
+    });
+    writePi({
+      type: "oauth",
+      access: PI_TOKEN,
+      expires: Date.now() + 3_600_000,
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 401 })),
     );
 
-    const { stampClaudePiContext } = await import(
-      "../../src/providers/claude-cache-context.js"
-    );
+    const { stampClaudePiContext } =
+      await import("../../src/providers/claude-cache-context.js");
     const { writeCachedProviders } = await import("../../src/cache.js");
     const cached = {
       provider: "claude" as const,
@@ -83,13 +93,22 @@ describe("Claude Pi Anthropic adapter", () => {
   });
 
   it("does not hand over a transient stored-source failure to Pi", async () => {
-    writeClaude({ accessToken: OAUTH_TOKEN, expiresAt: Date.now() + 3_600_000 });
-    writePi({ type: "oauth", access: PI_TOKEN, expires: Date.now() + 3_600_000 });
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const authorization = new Headers(init?.headers).get("authorization");
-      expect(authorization).toBe(`Bearer ${OAUTH_TOKEN}`);
-      return new Response(null, { status: 503 });
+    writeClaude({
+      accessToken: OAUTH_TOKEN,
+      expiresAt: Date.now() + 3_600_000,
     });
+    writePi({
+      type: "oauth",
+      access: PI_TOKEN,
+      expires: Date.now() + 3_600_000,
+    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        expect(authorization).toBe(`Bearer ${OAUTH_TOKEN}`);
+        return new Response(null, { status: 503 });
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const { fetchQuota } = await import("../../src/providers/claude.js");
@@ -103,13 +122,19 @@ describe("Claude Pi Anthropic adapter", () => {
 function writePi(value: unknown): void {
   const directory = join(home, ".pi", "agent");
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, "auth.json"), JSON.stringify({ anthropic: value }));
+  writeFileSync(
+    join(directory, "auth.json"),
+    JSON.stringify({ anthropic: value }),
+  );
 }
 
 function writeClaude(value: unknown): void {
   const directory = join(home, ".claude");
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, ".credentials.json"), JSON.stringify({ claudeAiOauth: value }));
+  writeFileSync(
+    join(directory, ".credentials.json"),
+    JSON.stringify({ claudeAiOauth: value }),
+  );
 }
 
 function mockAnthropic({ token }: { token: string }): void {
@@ -121,9 +146,7 @@ function mockAnthropic({ token }: { token: string }): void {
       const url = String(_input);
       if (url.endsWith("/usage"))
         return new Response(JSON.stringify({ five_hour: { utilization: 2 } }));
-      return new Response(
-        JSON.stringify({ account: { uuid: "pi-account" } }),
-      );
+      return new Response(JSON.stringify({ account: { uuid: "pi-account" } }));
     }),
   );
 }

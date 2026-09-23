@@ -34,6 +34,7 @@ import type {
 } from "../types.js";
 import {
   failedProvider,
+  servableStaleWindows,
   sourceNames,
   statusFromError,
   successProvider,
@@ -948,10 +949,9 @@ function staleClaudeReport(
   const ageMilliseconds = now - refreshedAt;
   if (ageMilliseconds >= SEVEN_DAYS_MS) return undefined;
 
-  const windows = cached.windows.filter((window) => {
-    if (window.resetsAt !== undefined) {
-      const resetsAt = Date.parse(window.resetsAt);
-      return Number.isFinite(resetsAt) && resetsAt > now;
+  const windows = servableStaleWindows(cached, now).filter((window) => {
+    if (window.resetsAt && Number.isFinite(Date.parse(window.resetsAt))) {
+      return true;
     }
     const maxAge = resetlessWindowMaxAge(window);
     return maxAge !== undefined && ageMilliseconds < maxAge;
@@ -982,11 +982,7 @@ function resetlessWindowMaxAge(window: QuotaWindow): number | undefined {
   if (window.kind === "weekly" || window.kind === "model") {
     return SEVEN_DAYS_MS;
   }
-  if (
-    window.kind === "session" ||
-    window.kind === "monthly" ||
-    window.kind === "credits"
-  ) {
+  if (window.kind === "session" || window.kind === "monthly") {
     return FIVE_HOURS_MS;
   }
   return undefined;
