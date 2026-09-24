@@ -17,9 +17,10 @@ import { isUsageFetchFailure } from "./providers/usage-fetch-failure.js";
  * Human terminal report ("Direction D'"): a two-up card grid with thin
  * headroom bars and a linear-pace marker wherever pace is known. This surface is
  * presentation only - it renders the same redacted response the TOON and JSON
- * surfaces receive, grouped by the caller's presence classification, and
- * derives nothing new from providers or the cache. Providers with nothing set
- * up fold into one footer line unless the caller asks to draw them in full.
+ * surfaces receive, preserving input order among readings and putting
+ * attention cards after them. It derives nothing new from providers or the
+ * cache. Providers with nothing set up fold into one footer line unless the
+ * caller asks to draw them in full.
  */
 
 export type TuiColorDepth = "none" | "16" | "256" | "truecolor";
@@ -178,7 +179,12 @@ export function renderQuotaTui(
     );
   });
   const { live, stale, attention, absent } = tiers;
-  const carded = [...live, ...stale, ...attention];
+  const carded = response.providers
+    .filter((provider, index) => {
+      const presence = options.presence?.[index] ?? providerPresence(provider);
+      return provider.state.status === "stale" || presence === "live";
+    })
+    .concat(attention);
   const card = (provider: ProviderQuota): Card =>
     buildCard(provider, generatedAtMs, show);
 
@@ -416,7 +422,10 @@ function buildLiveCard(
   }
 
   for (const note of cardNotes(provider)) {
-    for (const part of wrapCardNote(note)) {
+    const parts = stale
+      ? wrapCardNote(note)
+      : [truncate(note, CARD_INTERIOR - 4)];
+    for (const part of parts) {
       lines.push(interior([{ text: `   ${part}`, style: "dimmer" }], "border"));
     }
   }

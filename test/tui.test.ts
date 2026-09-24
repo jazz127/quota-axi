@@ -170,6 +170,50 @@ describe("renderQuotaTui structure", () => {
     );
   });
 
+  it("preserves input order across reading cards and follows with attention", () => {
+    const stale = claudeProvider();
+    stale.state = {
+      ...stale.state,
+      status: "stale",
+      stale: true,
+      refreshedAt: "2026-08-06T22:00:00.000Z",
+      error: "network unavailable",
+    };
+    const lines = renderQuotaTui(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 6,
+        providers: [
+          stale,
+          codexProvider(),
+          signedOutProvider("cursor", "signed out"),
+        ],
+      },
+      { columns: 80 },
+    ).split("\n");
+    const titleOrder = lines.filter((line) => line.startsWith("╭─"));
+    expect(titleOrder[0]).toContain("◌ claude");
+    expect(titleOrder[1]).toContain("● codex");
+    expect(titleOrder[2]).toContain("○ cursor");
+  });
+
+  it("keeps fresh card notes truncated to one line", () => {
+    const codex = codexProvider();
+    codex.state.remedyCommand =
+      "quota-axi --provider codex --allow-keychain-prompt";
+    const lines = renderQuotaTui(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 6,
+        providers: [codex],
+      },
+      { columns: 80 },
+    ).split("\n");
+    const notes = lines.filter((line) => line.includes("run: quota-axi"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("…");
+  });
+
   it("zips live provider cards two-up with live providers first", () => {
     const lines = render();
     const title = findLine(lines, "● claude");
