@@ -815,7 +815,7 @@ describe("Codex Pi sibling account lanes", () => {
     expect(reports[0]?.account?.accountId).toBeUndefined();
   });
 
-  it("keeps an established CLI lane stale when its probe cannot be reached", async () => {
+  it("reports an unauthenticated CLI lane unavailable when its probe cannot be reached", async () => {
     const { writeCachedProviders } = await import("../../src/cache.js");
     writeCachedProviders([
       {
@@ -863,8 +863,15 @@ describe("Codex Pi sibling account lanes", () => {
     ]);
     expect(reports[0]).toMatchObject({
       windows: [],
-      state: { status: "error", stale: false },
+      state: { status: "unavailable", stale: false },
     });
+    expect(reports[0]?.state.error).toBeTruthy();
+    expect(reports[0]?.state.sourcesTried).toContain("cli-rpc");
+    expect(reports[0]?.attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "cli-rpc", status: "failed" }),
+      ]),
+    );
   });
 
   it("never revives a cached CLI account after a confirmed logout", async () => {

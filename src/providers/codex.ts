@@ -1132,11 +1132,15 @@ function codexFailureReport(
       accountKeys: [codexCredentialKey(cached?.source) ?? credentialKey],
     };
   }
+  const failureStatus = retryAfter ? "rate_limited" : statusFromError(error);
   const report = failedProvider({
     provider: "codex",
     label: "Codex",
     ...(source ? { source } : {}),
-    status: retryAfter ? "rate_limited" : statusFromError(error),
+    status:
+      accountIds.length === 0 && failureStatus === "error"
+        ? "unavailable"
+        : failureStatus,
     error,
     retryAfter,
     sourcesTried: sourceNames(attempts),
