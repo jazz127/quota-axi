@@ -90,6 +90,11 @@ describe("Codex Pi sibling account lanes", () => {
     expect(reports[0]).toMatchObject({
       provider: "codex",
       source: "pi:openai-codex",
+      accountLocator: {
+        kind: "pi-auth",
+        path: join(process.env.PI_CODING_AGENT_DIR!, "auth.json"),
+        entry: "openai-codex",
+      },
       account: {
         email: "personal@example.invalid",
         accountId: "acct-personal",

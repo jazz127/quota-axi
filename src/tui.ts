@@ -1191,7 +1191,7 @@ function accountCardLines(
     const label = provider.account?.label;
     const identity = provider.accountKey
       ? `${provider.accountKey}${label && label !== provider.accountKey ? ` (${label})` : ""}`
-      : label ?? "unknown";
+      : (label ?? "unknown");
     const origin = provider.account?.credentialHome
       ? `home ${collapseHome(provider.account.credentialHome)}`
       : `source ${provider.account?.credentialSource ?? provider.source ?? "unknown"}`;
@@ -1200,7 +1200,7 @@ function accountCardLines(
         [
           {
             text: truncate(
-              `   account ${identity} · ${origin} · selected account`,
+              `   account ${identity} · ${origin}${provider.accountKey ? "" : " · selected account"}`,
               CARD_INTERIOR,
             ),
             style: "dim",

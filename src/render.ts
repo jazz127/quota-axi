@@ -575,6 +575,10 @@ function auditBlocks(response: QuotaAxiResponse): string[] {
     organization: provider.account?.organization ?? NONE,
     accountId: provider.account?.accountId ?? NONE,
     identityStatus: provider.account?.identityStatus ?? UNKNOWN,
+    locatorKind: provider.accountLocator?.kind ?? NONE,
+    locatorPath: provider.accountLocator?.path ?? NONE,
+    locatorEntry: provider.accountLocator?.entry ?? NONE,
+    delegateEligible: provider.accountLocator?.delegateEligible ?? false,
   }));
   const attempts = response.providers.flatMap((provider) =>
     (provider.attempts ?? []).map((attempt) => attemptRow(provider, attempt)),
@@ -686,6 +690,7 @@ export function redactedResponse(
     ...response,
     providers: response.providers.map((provider) => ({
       ...provider,
+      accountLocator: undefined,
       account:
         provider.provider === "codex" && provider.account
           ? {
