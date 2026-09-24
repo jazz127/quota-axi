@@ -489,7 +489,7 @@ describe("release-please CI exclusions", () => {
     expect(on).not.toBeNull();
     expect(on!.push).toEqual({ branches: ["main"] });
     const pr = on!.pull_request as Record<string, unknown>;
-    expect(pr.branches).toEqual(["main"]);
+    expect(pr.branches).toEqual(["main", "house"]);
     expect(pr["paths-ignore"]).toEqual([
       ".release-please-manifest.json",
       "CHANGELOG.md",
