@@ -32,8 +32,8 @@ restore_on_error() {
 trap restore_on_error EXIT HUP INT TERM
 
 git clone --quiet --depth 1 --branch house "$repo" "$source_dir"
-pnpm --dir "$source_dir" install --frozen-lockfile
-pnpm --dir "$source_dir" run build
+(cd "$source_dir" && corepack pnpm install --frozen-lockfile)
+(cd "$source_dir" && corepack pnpm run build)
 cat > "$launcher" <<EOF
 #!/bin/sh
 exec node "$source_dir/dist/bin/quota-axi.js" "\$@"
