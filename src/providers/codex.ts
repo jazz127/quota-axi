@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   deleteCachedProvider,
@@ -59,6 +60,7 @@ const CLI_TIMEOUT_MS = 15_000;
 const RPC_TIMEOUT_MS = 8_000;
 const CODEX_BINARY_ENV = "QUOTA_AXI_CODEX_BINARY";
 const PI_CODEX_CREDENTIAL_SOURCE = piCodexSource(PI_CODEX_BUILTIN_ID);
+const EXTRA_HOMES_ENV = "QUOTA_AXI_CODEX_HOMES";
 
 type CodexBinaryState =
   | { status: "available"; path: string }
@@ -135,8 +137,12 @@ export function createCodexAdapter(
   return {
     id: "codex",
     label: "Codex",
-    discoverAccounts: () => discoverCodexAccounts(dependencies),
-    fetchQuota: (options) => fetchSingleWinnerQuota(dependencies, options),
+    discoverAccounts: () => discoverCodexHomeAccounts(dependencies),
+    fetchQuota: async (options) =>
+      withCredentialHome(
+        await fetchSingleWinnerQuota(dependencies, options),
+        selectedCodexHome(),
+      ),
     inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
   };
 }
@@ -146,10 +152,182 @@ export const codexAdapter = createCodexAdapter();
 export async function fetchQuota(
   options: ProviderOptions,
 ): Promise<ProviderQuota> {
-  return fetchSingleWinnerQuota(defaultCodexDependencies, options);
+  return withCredentialHome(
+    await fetchSingleWinnerQuota(defaultCodexDependencies, options),
+    selectedCodexHome(),
+  );
 }
 
 const CODEX_HOME_ACCOUNT_KEY = "codex-home";
+
+function selectedCodexHome(): string {
+  return resolve(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
+}
+
+function withCredentialHome(
+  report: ProviderQuota,
+  home: string,
+): ProviderQuota {
+  return report.source === "oauth" || report.source === "cli-rpc"
+    ? {
+        ...report,
+        credentialHome: home,
+        accountLabel:
+          report.accountLabel ?? accountLabel(report.account?.accountId),
+      }
+    : report;
+}
+
+function accountLabel(accountId: string | undefined): string | undefined {
+  return accountId ? `#${accountId.slice(-8)}` : undefined;
+}
+
+/** Extra homes are a JSON array of absolute paths; a bad entry cannot select a credential. */
+function configuredCodexHomes(): string[] {
+  const raw = process.env[EXTRA_HOMES_ENV];
+  if (!raw) return [];
+  try {
+    const entries: unknown = JSON.parse(raw);
+    return Array.isArray(entries)
+      ? entries.filter(
+          (entry): entry is string =>
+            typeof entry === "string" && isAbsolute(entry),
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function discoverCodexHomeAccounts(
+  dependencies: CodexDependencies,
+): Promise<ProviderAccount[] | undefined> {
+  const selected = selectedCodexHome();
+  const configured = configuredCodexHomes();
+  const explicitHomes = new Set(configured.map((home) => resolve(home)));
+  const defaults =
+    process.env[EXTRA_HOMES_ENV]?.trim() === "[]"
+      ? []
+      : [join(homedir(), ".codex"), join(homedir(), ".codex-luna")];
+  const seen = new Set([selected]);
+  const extra: { home: string; key: string }[] = [];
+  for (const candidate of [...defaults, ...configured]) {
+    const home = resolve(candidate);
+    if (seen.has(home)) continue;
+    seen.add(home);
+    const state = readCredentialState(join(home, "auth.json"));
+    // Built-in homes are opportunistic. Explicit homes remain visible when broken.
+    if (state.status === "missing" && !explicitHomes.has(home)) continue;
+    const name =
+      defaults[0] && home === resolve(defaults[0])
+        ? "codex-default"
+        : defaults[1] && home === resolve(defaults[1])
+          ? "codex-luna"
+          : `codex-${createHash("sha256").update(home).digest("hex").slice(0, 16)}`;
+    extra.push({ home, key: name });
+  }
+  if (extra.length === 0) return discoverCodexAccounts(dependencies);
+  const legacy = await discoverCodexAccounts(dependencies);
+  const selectedAccounts: ProviderAccount[] = legacy ?? [
+    {
+      accountKey: CODEX_HOME_ACCOUNT_KEY,
+      fetchQuota: (_options) => fetchSingleWinnerQuota(dependencies, _options),
+      inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
+    },
+  ];
+  return [
+    ...selectedAccounts.map((account) => ({
+      ...account,
+      fetchQuota: async (options: ProviderOptions) => {
+        const report = await account.fetchQuota(options);
+        return report && withCredentialHome(report, selected);
+      },
+    })),
+    ...extra.map(
+      ({ home, key }): ProviderAccount => ({
+        accountKey: key,
+        fetchQuota: () => fetchOtherCodexHome(home, key),
+        inspectAuth: async () => ({
+          provider: "codex",
+          sources: [readCredentialState(join(home, "auth.json")).source],
+        }),
+      }),
+    ),
+  ];
+}
+
+async function fetchOtherCodexHome(
+  home: string,
+  key: string,
+): Promise<ProviderQuota> {
+  const state = readCredentialState(join(home, "auth.json"));
+  const accountId =
+    state.status === "available" || state.status === "expired"
+      ? state.credentials.accountId
+      : undefined;
+  if (state.status === "available" || state.status === "expired") {
+    const result = await attemptCodexCandidate({
+      source: "oauth",
+      credentials: state.credentials,
+    });
+    if (result.kind === "quota") {
+      return {
+        ...codexSuccessReport(
+          result.result,
+          "oauth",
+          [{ source: "oauth", status: "success" }],
+          accountId,
+        ),
+        credentialHome: home,
+        accountLabel: accountLabel(
+          result.result.account?.accountId ?? accountId,
+        ),
+        accountKeys: [key],
+      };
+    }
+    const error =
+      result.kind === "rejected"
+        ? "Codex sign-in required"
+        : result.kind === "live_no_quota"
+          ? "Codex quota unavailable"
+          : result.error;
+    return {
+      ...codexFailureReport(
+        error,
+        result.kind === "transient" ? result.retryAfter : undefined,
+        [{ source: "oauth", status: "failed", error }],
+        "oauth",
+        key,
+        accountId ? [accountId] : [],
+        key,
+      ),
+      credentialHome: home,
+    };
+  }
+  const error =
+    state.status === "missing"
+      ? "Codex profile credentials missing"
+      : profileOnlyCredentialError(state.source.error ?? "credentials_invalid");
+  return {
+    ...codexFailureReport(
+      error,
+      undefined,
+      [
+        {
+          source: "oauth",
+          status: "skipped",
+          error: state.source.error ?? `credentials_${state.status}`,
+          ...(state.status === "invalid" ? { credentialPresent: true } : {}),
+        },
+      ],
+      "oauth",
+      key,
+      [],
+      key,
+    ),
+    credentialHome: home,
+  };
+}
 
 /**
  * The credential key a credential source belongs to: the native store and
@@ -852,6 +1030,11 @@ function codexSuccessReport(
     attempts,
   });
   stampCodexStoredAccountId(report, storedAccountId);
+  if (source === "oauth" || source === "cli-rpc") {
+    report.accountLabel = accountLabel(
+      quota.account?.accountId ?? storedAccountId,
+    );
+  }
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;

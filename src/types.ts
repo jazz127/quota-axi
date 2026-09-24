@@ -292,6 +292,10 @@ export type ProviderQuota = {
    * just its own key, and a provider without account discovery lists `default`.
    */
   accountKeys?: string[];
+  /** Native credential home used for this reading, when applicable. */
+  credentialHome?: string;
+  /** Short non-secret account identifier for multi-home display. */
+  accountLabel?: string;
   /** Display name. Omitted from default `--json`; see `--full`. */
   label?: string;
   /** Report provenance. Omitted from default `--json`; see `--full`. */

@@ -973,6 +973,10 @@ function fullFooterLines(provider: ProviderQuota, width: number): string[] {
     protectedAccountParts.add(accountParts.length);
     accountParts.push(`identity ${provider.account.identityStatus}`);
   }
+  if (provider.credentialHome) {
+    accountParts.push(provider.accountLabel ?? "unknown");
+    accountParts.push(provider.credentialHome);
+  }
   const attempts = (provider.attempts ?? []).map(
     (attempt) =>
       `${attempt.source} (${attempt.status}${attempt.error ? `: ${attempt.error}` : ""})`,
@@ -1147,18 +1151,16 @@ function accountCardLines(
   border: "border" | "borderDim",
 ): Line[] {
   const accountKey = configuredAccountKey(provider);
-  if (!accountKey) return [];
-  return [
-    interior(
-      [
-        {
-          text: truncate(`   account ${accountKey}`, CARD_INTERIOR),
-          style: "dim",
-        },
-      ],
-      border,
-    ),
+  if (!accountKey && !provider.credentialHome) return [];
+  const details = [
+    accountKey
+      ? `   account ${accountKey}${provider.accountLabel ? ` ${provider.accountLabel}` : ""}`
+      : `   account ${provider.accountLabel ?? "unknown"}`,
+    ...(provider.credentialHome ? [`   home ${provider.credentialHome}`] : []),
   ];
+  return details.map((detail) =>
+    interior([{ text: truncate(detail, CARD_INTERIOR), style: "dim" }], border),
+  );
 }
 
 function truncate(text: string, width: number): string {

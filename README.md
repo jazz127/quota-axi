@@ -394,7 +394,10 @@ The lane keeps the first key as its `accountKey`, while `source` names the key t
 See [Account keys and compatibility](#account-keys-and-compatibility) for how consumers join folded keys to a row.
 A key whose identity cannot be compared is left as its own lane so the uncertainty stays visible.
 
-When only the built-in Pi entry (or none) is present, Codex keeps its existing single-winner path: native `$CODEX_HOME/auth.json`, then `openai-codex`, then the CLI fallback.
+Native Codex home discovery reads the environment-selected `$CODEX_HOME` (or `~/.codex` when unset), `~/.codex`, and `~/.codex-luna`. Set `QUOTA_AXI_CODEX_HOMES` to a JSON array of absolute directory paths to add further seats, for example `QUOTA_AXI_CODEX_HOMES='["/Users/me/.codex-work"]'`. Duplicate paths are read once. An absent built-in home is omitted; a configured home that is missing or unreadable remains visible as an unmeasured lane. Each native reading carries `credentialHome` and a short `accountLabel` (the last eight characters of its account id) in JSON, TOON, and the TUI. The full account identity remains available in `--full`. Additional homes use only their own `auth.json` for a read-only quota probe; the selected home retains its existing Pi and Codex CLI fallbacks. Discovery does not change the process's `CODEX_HOME` or expose an additional credential to another tool. `--profile-only` continues to read only its explicitly selected home.
+Set `QUOTA_AXI_CODEX_HOMES='[]'` to read only the selected home.
+
+When only the built-in Pi entry (or none) is present and no other Codex home is found, Codex keeps its existing single-winner path: native `$CODEX_HOME/auth.json`, then `openai-codex`, then the CLI fallback.
 That row's `accountKeys` names the key of the credential that produced it: `codex-home` for the native login or CLI fallback, `openai-codex` for the built-in entry. A failed row names the credential it speaks for, and a stale row names the one that produced its cached snapshot. The other key is added when the native login and the built-in entry store the same `accountId`. A `--profile-only` row is always `codex-home`.
 When siblings are present and a native `$CODEX_HOME/auth.json` exists, that login stays first as its own `codex-home` lane, read from `auth.json` and then the CLI fallback.
 The built-in `openai-codex` entry whose stored `accountId` matches the native login is not a separate lane; it stays the native lane's fallback, as it was before.
@@ -423,7 +426,7 @@ Models and model sort ties use **`provider` + `accountKey` + `id`**.
 Models `unmatchedWindowIds` entries gain the same key, so an unmapped window reads `provider/accountKey/scope` instead of `provider/scope`; the key keeps two accounts of one provider from reporting the same unmapped window indistinguishably.
 Declaration order remains non-preferential; quotas are never combined across accounts.
 
-A Codex Pi lane's key is the auth.json provider id (`openai-codex`, `openai-codex-work`); the native Codex lane's key is `codex-home`.
+A Codex Pi lane's key is the auth.json provider id (`openai-codex`, `openai-codex-work`); the selected native Codex lane's key is `codex-home`. Other native homes use `codex-default`, `codex-luna`, or a path-digest key for a configured home.
 It is stable across refreshes and discovery order and contains no token, email, or path, and it also names the account's cache slot.
 A lone lane keeps the legacy keyless slot, which the single selected account uses too, so the snapshot itself records the stored ChatGPT account id of the credential that produced it (see [Cache](#cache)).
 A key the report cannot publish (malformed or repeated) costs only its own lane: the lanes with usable keys still expand, so one unreadable entry never hides the accounts beside it.
