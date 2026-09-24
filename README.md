@@ -25,6 +25,34 @@ It is data only: it never routes, recommends a provider, model, harness, credent
 
 ## Quick Start
 
+### Install the jazz127 house line
+
+The fork's `house` branch includes the OpenRouter credit and usage report and
+the Pi Anthropic credential source. To install that line ahead of an existing
+Homebrew `quota-axi`, run:
+
+```sh
+./scripts/install-house.sh
+```
+
+The installer clones the source under `/opt/homebrew/opt/quota-axi-house`,
+backs up the exact existing executable link, and installs a launcher at
+`/opt/homebrew/bin/quota-axi`. Ensure `/opt/homebrew/bin` precedes any other
+`quota-axi` directory on `PATH`. Verify the selected executable with
+`command -v quota-axi` and `quota-axi --version`.
+
+To restore the previous executable exactly and remove the fork installation:
+
+```sh
+./scripts/undo-house.sh
+```
+
+Both scripts accept an optional prefix, useful for a disposable install:
+`./scripts/install-house.sh /tmp/quota-axi-prefix` and
+`./scripts/undo-house.sh /tmp/quota-axi-prefix`. The installer fetches
+`https://github.com/jazz127/quota-axi.git#house`; it does not alter the
+upstream repository or the fork's `main` branch.
+
 **Credential-source note:** Claude Code, the Cursor CLI (`cursor-agent`), and Copilot CLI keep live tokens in native secure stores on supported platforms. Linux `cursor-agent` stores its access token in `~/.config/cursor/auth.json` (or the XDG/`$CURSOR_CLI_CONFIG` override); Copilot CLI uses Windows Credential Manager on Windows and the macOS Keychain on macOS.
 quota-axi does not read native secure-store values until the user grants permission, so Claude quota, CLI-only Cursor auth, or Copilot CLI auth can stay stale or appear unavailable when no other usable credential exists. On Linux it reads only the Cursor auth file's `accessToken` and never its refresh token.
 Run `quota-axi --allow-keychain-prompt` once and approve macOS Keychain access with "Always Allow"; on Windows the same flag permits the Copilot CLI Credential Manager read without an OS prompt.
