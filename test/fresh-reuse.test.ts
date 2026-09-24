@@ -347,6 +347,8 @@ describe("fresh reuse", () => {
       { source: "oauth-file", status: "success" },
       { source: "oauth-profile", status: "success" },
     ]);
+    expect(reused.account).toEqual(fresh.account);
+    expect(reused.attempts).toEqual(fresh.attempts);
   });
 
   it("names a reused reading in TOON attention and keeps its quota rows", async () => {
