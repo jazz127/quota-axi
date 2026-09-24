@@ -483,8 +483,11 @@ async function readProvider(
  * tier and always reads live for account identity and source attempts.
  */
 function readMaxAge(flags: QuotaFlags): number {
-  if (flags.full) return 0;
-  return flags.maxAgeSeconds ?? readMaxAgeEnv() ?? 0;
+  const environmentMaxAge =
+    flags.maxAgeSeconds === undefined ? readMaxAgeEnv() : undefined;
+  return flags.full
+    ? 0
+    : (flags.maxAgeSeconds ?? environmentMaxAge ?? 0);
 }
 
 /** Env var naming a quota snapshot file that answers instead of any vendor. */
