@@ -11,6 +11,7 @@ import type {
   QuotaWindow,
 } from "./types.js";
 import { creditWindowMatchesBalance } from "./render.js";
+import { isUsageFetchFailure } from "./providers/usage-fetch-failure.js";
 
 /**
  * Human terminal report ("Direction D'"): a two-up card grid with thin
@@ -164,18 +165,20 @@ export function renderQuotaTui(
   const timeZone = options.timeZone;
   const show = options.show ?? "remaining";
 
-  const tiers: Record<ProviderPresence, ProviderQuota[]> = {
+  const tiers: Record<ProviderPresence | "stale", ProviderQuota[]> = {
     live: [],
+    stale: [],
     attention: [],
     absent: [],
   };
   response.providers.forEach((provider, index) => {
-    tiers[options.presence?.[index] ?? providerPresence(provider)].push(
+    const presence = options.presence?.[index] ?? providerPresence(provider);
+    tiers[provider.state.status === "stale" ? "stale" : presence].push(
       provider,
     );
   });
-  const { live, attention, absent } = tiers;
-  const carded = [...live, ...attention];
+  const { live, stale, attention, absent } = tiers;
+  const carded = [...live, ...stale, ...attention];
   const card = (provider: ProviderQuota): Card =>
     buildCard(provider, generatedAtMs, show);
 
@@ -294,7 +297,7 @@ function resolveColumns(columns: number | undefined): number {
 }
 
 function isLive(provider: ProviderQuota): boolean {
-  return provider.state.status === "fresh" || provider.state.status === "stale";
+  return provider.state.status === "fresh";
 }
 
 /**
@@ -304,13 +307,14 @@ function isLive(provider: ProviderQuota): boolean {
  */
 function headerText(
   response: QuotaAxiResponse,
-  tiers: Record<ProviderPresence, ProviderQuota[]>,
+  tiers: Record<ProviderPresence | "stale", ProviderQuota[]>,
   width: number,
   timeZone?: string,
 ): string {
   const attention = tiers.attention.length;
   const counts = [
     `${tiers.live.length} live`,
+    ...(tiers.stale.length > 0 ? [`${tiers.stale.length} stale`] : []),
     `${attention} ${attention === 1 ? "needs" : "need"} attention`,
     `${tiers.absent.length} not set up`,
   ];
@@ -332,7 +336,33 @@ function buildCard(
 ): Card {
   return isLive(provider)
     ? buildLiveCard(provider, generatedAtMs, show)
-    : buildFailedCard(provider);
+    : provider.state.status === "stale"
+      ? muteStaleCard(buildLiveCard(provider, generatedAtMs, show))
+      : buildFailedCard(provider);
+}
+
+function muteStaleCard(card: Card): Card {
+  const muted = new Set<StyleName>([
+    "ok",
+    "okBold",
+    "warn",
+    "warnBold",
+    "crit",
+    "critBold",
+    "marker",
+    "track",
+    "border",
+  ]);
+  return card.map((line) =>
+    line.map((segment) => ({
+      ...segment,
+      style: segment.style?.startsWith("accent:")
+        ? "dimBold"
+        : segment.style && muted.has(segment.style)
+          ? "dimmer"
+          : segment.style,
+    })),
+  );
 }
 
 function buildLiveCard(
@@ -351,8 +381,8 @@ function buildLiveCard(
   const lines: Line[] = [
     titleLine(
       {
-        text: ` ● ${provider.provider} `,
-        style: `accent:${provider.provider}`,
+        text: ` ${stale ? "◌" : "●"} ${provider.provider} `,
+        style: stale ? "dimBold" : `accent:${provider.provider}`,
       },
       rightTitle,
       "border",
@@ -386,16 +416,30 @@ function buildLiveCard(
   }
 
   for (const note of cardNotes(provider)) {
-    lines.push(
-      interior(
-        [{ text: `   ${truncate(note, CARD_INTERIOR - 4)}`, style: "dimmer" }],
-        "border",
-      ),
-    );
+    for (const part of wrapCardNote(note)) {
+      lines.push(interior([{ text: `   ${part}`, style: "dimmer" }], "border"));
+    }
   }
 
   lines.push(interior([], "border"));
   lines.push(bottomLine("border"));
+  return lines;
+}
+
+function wrapCardNote(note: string): string[] {
+  const width = CARD_INTERIOR - 4;
+  const lines: string[] = [];
+  let current = "";
+  for (const word of note.split(/\s+/)) {
+    const next = current ? `${current} ${word}` : word;
+    if (displayWidth(next) > width && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  if (current) lines.push(truncate(current, width));
   return lines;
 }
 
@@ -845,6 +889,20 @@ function runwayVerdict(headline: EffectiveAvailability | undefined): Line {
 
 function cardNotes(provider: ProviderQuota): string[] {
   const notes: string[] = [];
+  if (provider.state.stale) {
+    const error = provider.state.error
+      ? `${isUsageFetchFailure(provider) ? "fetch failed " : ""}${provider.state.error}`
+      : undefined;
+    notes.push(
+      [
+        `last refreshed ${provider.state.refreshedAt ?? "unknown"}`,
+        error,
+        provider.state.reason ? `reason ${provider.state.reason}` : undefined,
+      ]
+        .filter((part): part is string => part !== undefined)
+        .join(" · "),
+    );
+  }
   if (provider.state.retryAfter) {
     notes.push(`retry after ${provider.state.retryAfter}`);
   }
@@ -946,7 +1004,9 @@ function resetCountdown(window: QuotaWindow, generatedAtMs: number): string {
   if (window.resetsAt !== undefined) {
     const resetMs = Date.parse(window.resetsAt);
     if (Number.isFinite(resetMs) && Number.isFinite(generatedAtMs)) {
-      return formatCountdown((resetMs - generatedAtMs) / 1000);
+      return resetMs <= generatedAtMs
+        ? "ended"
+        : formatCountdown((resetMs - generatedAtMs) / 1000);
     }
   }
   return window.resetText === undefined ? "" : truncate(window.resetText, 6);
