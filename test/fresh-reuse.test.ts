@@ -321,13 +321,13 @@ describe("fresh reuse", () => {
     ).toBe(true);
   });
 
-  it("keeps full account and source attempts on explicit fresh reuse", async () => {
+  it("reads live for full account and source-attempt evidence", async () => {
     const fresh = await readJson("--full", "--max-age", "0");
     advance(5);
     const reused = await readJson("--full", "--max-age", "90s");
 
-    expect(usageCalls).toBe(1);
-    expect(reused.state.reused).toBe(true);
+    expect(usageCalls).toBe(2);
+    expect(reused.state.reused).toBeUndefined();
     expect(fresh.account).toEqual({
       accountId: "fixture",
       identityStatus: "verified",
@@ -336,24 +336,6 @@ describe("fresh reuse", () => {
       { source: "oauth-file", status: "success" },
       { source: "oauth-profile", status: "success" },
     ]);
-    expect(reused.account).toEqual(fresh.account);
-    expect(reused.attempts).toEqual(fresh.attempts);
-  });
-
-  it("reads again when an older reuse stamp cannot carry full evidence", async () => {
-    await readJson();
-    const cache = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
-      providers: { reuse: Record<string, unknown> }[];
-    };
-    delete cache.providers[0]!.reuse.evidenceComplete;
-    writeFileSync(cacheFilePath(), JSON.stringify(cache));
-
-    advance(5);
-    const full = await readJson("--full", "--max-age", "90s");
-    expect(usageCalls).toBe(2);
-    expect(full.state.reused).toBeUndefined();
-    expect(full.account?.accountId).toBe("fixture");
-    expect(full.attempts?.length).toBeGreaterThan(0);
   });
 
   it("names a reused reading in TOON attention and keeps its quota rows", async () => {
@@ -453,7 +435,7 @@ describe("fresh reuse", () => {
     expect(usageCalls).toBeGreaterThan(1);
   });
 
-  it("reads the vendor for --full unless reuse is explicitly requested", async () => {
+  it("reads the vendor for --full", async () => {
     await readJson();
     const full = await readJson("--full");
     expect(usageCalls).toBe(2);
@@ -461,7 +443,7 @@ describe("fresh reuse", () => {
     expect(full.attempts?.length).toBeGreaterThan(0);
 
     await readJson("--full", "--max-age", "90s");
-    expect(usageCalls).toBe(2);
+    expect(usageCalls).toBe(3);
   });
 
   it("does not restamp a reused reading's age when it writes the cache", async () => {
