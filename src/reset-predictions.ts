@@ -89,13 +89,6 @@ export async function fetchResetPredictions(
         now - recent.at < MIN_POLL_MS[source]
       )
         return recent.reading;
-      const remember = (
-        reading: ResetPredictionReading,
-      ): ResetPredictionReading => {
-        if (fetcher === providerFetch)
-          recentReads.set(source, { at: now, reading });
-        return reading;
-      };
       try {
         const response = await fetcher(ENDPOINTS[source], {
           headers: {
@@ -105,21 +98,23 @@ export async function fetchResetPredictions(
           },
           signal: AbortSignal.timeout(8_000),
         });
-        if (!response.ok) return remember({ source, verdict: "unavailable" });
+        if (!response.ok) return { source, verdict: "unavailable" };
         const body = await response.text();
         if (body.length > 262_144)
-          return remember({ source, verdict: "unavailable" });
+          return { source, verdict: "unavailable" };
         const probability = parseResetPrediction(source, JSON.parse(body), now);
         if (probability === undefined)
-          return remember({ source, verdict: "unavailable" });
+          return { source, verdict: "unavailable" };
         const reading: ResetPredictionReading = {
           source,
           verdict: probability >= 50 ? "reset" : "none",
           probabilityPercent: probability,
         };
-        return remember(reading);
+        if (fetcher === providerFetch)
+          recentReads.set(source, { at: now, reading });
+        return reading;
       } catch {
-        return remember({ source, verdict: "unavailable" });
+        return { source, verdict: "unavailable" };
       }
     }),
   );
