@@ -14,6 +14,7 @@ import {
   readCachedClaudeProvider,
   readCachedCommandCodeProvider,
   readCachedKimiProvider,
+  readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedOpenRouterProvider,
   readCachedProvider,
@@ -29,6 +30,12 @@ import {
 import { staleFromCache } from "../src/providers/common.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { createKimiCodeCliCredentialSource } from "../src/providers/kimi-code-cli-credential.js";
+import { createKimiAdapter } from "../src/providers/kimi.js";
+import {
+  clearDevinReadingContextId,
+  devinCacheContextId,
+  publishDevinReadingContextId,
+} from "../src/providers/devin-cache-context.js";
 import { publishMiniMaxReadingContextId } from "../src/providers/minimax-cache-context.js";
 import {
   clearOpenRouterReadingContextId,
@@ -53,6 +60,7 @@ afterEach(() => {
   tempDir = undefined;
   clearCommandCodeReadingContextId();
   clearOpenRouterReadingContextId();
+  clearDevinReadingContextId();
 });
 
 describe("quota cache", () => {
@@ -197,7 +205,15 @@ describe("quota cache", () => {
 
     const later = annotateQuotaAdvice({
       generatedAt: "2026-07-06T19:10:00Z",
-      providers: [staleFromCache(cached!, "fetch failed", ["api"], [])],
+      providers: [
+        staleFromCache(
+          cached!,
+          "fetch failed",
+          ["api"],
+          [],
+          Date.parse("2026-07-06T19:10:00Z"),
+        )!,
+      ],
     });
     expect(later.schemaVersion).toBe(5);
     expect(later.providers[0]?.accountKey).toBeUndefined();
@@ -412,6 +428,91 @@ oauth_host = "https://auth.kimi.ai"
     expect(
       readCachedKimiProvider(await selectKimiEnvironment()),
     ).toBeUndefined();
+  });
+
+  /**
+   * An authenticated `/usages` body with no quota field (a Free-tier account)
+   * is a fresh reading with no windows, per README Cache "fresh with no
+   * windows clears this context's slot" - not a stale-eligible failure that
+   * would preserve a pre-existing snapshot.
+   */
+  it("clears an existing Kimi snapshot on a fresh no-quota reading, and a later transient failure does not resurrect it", async () => {
+    useTempCache();
+    const codeHome = join(tempDir!, "no-quota-kimi-code-home");
+    mkdirSync(codeHome, { recursive: true });
+    process.env.KIMI_CODE_HOME = codeHome;
+
+    const piBroker = {
+      resolve: async () =>
+        ({
+          status: "available",
+          kind: "api_key",
+          credential: "synthetic-pi-key",
+        }) as const,
+      inspect: async () => "available" as const,
+    };
+    const cliSource = createKimiCodeCliCredentialSource();
+    const readKimi = (respond: () => Response, at: string) =>
+      createKimiAdapter({
+        broker: piBroker,
+        cliCredentialSource: cliSource,
+        fetch: (async () => respond()) as unknown as typeof fetch,
+        readCachedProvider: readCachedKimiProvider,
+        deleteCachedProvider,
+        now: () => Date.parse(at),
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+    /**
+     * The snapshot the no-quota reading has to clear belongs to the identity
+     * that reading publishes, so it comes from a real successful read rather
+     * than from a context another test happened to leave behind.
+     */
+    const withWindows = await readKimi(
+      () =>
+        new Response(
+          JSON.stringify({
+            usages: {
+              limit_5h: {
+                used_ratio: 0.42,
+                reset_time: "2026-09-22T04:00:00Z",
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      "2026-09-21T23:55:00Z",
+    );
+    expect(withWindows.state.status).toBe("fresh");
+    expect(withWindows.windows.length).toBeGreaterThan(0);
+    writeCachedProviders([withWindows]);
+    expect(readCachedProvider("kimi")).toBeDefined();
+
+    const noQuotaReport = await readKimi(
+      () =>
+        new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      "2026-09-22T00:00:00Z",
+    );
+
+    expect(noQuotaReport.state).toMatchObject({
+      status: "fresh",
+      stale: false,
+      authStatus: "usable",
+    });
+    expect(noQuotaReport.windows).toEqual([]);
+
+    writeCachedProviders([noQuotaReport]);
+    expect(readCachedProvider("kimi")).toBeUndefined();
+
+    const failed = await readKimi(() => {
+      throw new Error("network down");
+    }, "2026-09-22T00:05:00Z");
+
+    expect(failed.state.stale).toBe(false);
+    expect(failed.windows).toEqual([]);
+    expect(readCachedProvider("kimi")).toBeUndefined();
   });
 
   it("scopes MiniMax cache reuse to the reading's source and deployment", () => {
@@ -634,7 +735,8 @@ oauth_host = "https://auth.kimi.ai"
       "fetch failed: synthetic outage",
       ["kimi-code"],
       [],
-    );
+      Date.parse("2026-07-06T18:20:00Z"),
+    )!;
     const monthCode = stale.windows.find(
       (window) => window.id === "month_code",
     );
@@ -752,6 +854,44 @@ oauth_host = "https://auth.kimi.ai"
     expect(readCachedCommandCodeProvider(contextId)).toBeUndefined();
     expect(readCachedProvider("commandcode")).toBeUndefined();
   });
+
+  it("reuses a Devin snapshot only for the source, host, and key that wrote it", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    const otherId = devinCacheContextId(
+      "file:credentials.toml",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    writeCachedProviders([quota("devin", 40)]);
+
+    clearDevinReadingContextId();
+    writeCachedProviders([quota("devin", 5)]);
+
+    expect(readCachedDevinProvider(contextId)?.windows[0].percentUsed).toBe(40);
+    expect(readCachedDevinProvider(otherId)).toBeUndefined();
+    expect(readCachedProvider("devin")?.windows[0].percentUsed).toBe(40);
+  });
+
+  it("clears a Devin snapshot after an identified no-window report", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    writeCachedProviders([quota("devin", 40)]);
+    writeCachedProviders([quotaWithoutWindows("devin")]);
+
+    expect(readCachedDevinProvider(contextId)).toBeUndefined();
+    expect(readCachedProvider("devin")).toBeUndefined();
+  });
 });
 
 function useTempCache(): void {
@@ -810,5 +950,6 @@ function providerLabel(provider: ProviderId): string {
   if (provider === "commandcode") return "Command Code";
   if (provider === "opencode-go") return "OpenCode Go";
   if (provider === "minimax") return "MiniMax";
+  if (provider === "devin") return "Devin";
   return "Kimi";
 }

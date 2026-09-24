@@ -384,9 +384,21 @@ describe("OpenRouter provider", () => {
       provider: "openrouter" as const,
       label: "OpenRouter",
       source: "api" as const,
-      windows: [{ id: "usage", label: "usage", kind: "credits" as const }],
+      windows: [
+        {
+          id: "usage",
+          label: "usage",
+          kind: "credits" as const,
+          resetsAt: "2030-01-01T00:00:00.000Z",
+        },
+      ],
       credits: { remaining: 8, unit: "usd" as const },
-      state: { status: "fresh" as const, stale: false, sourcesTried: ["api"] },
+      state: {
+        status: "fresh" as const,
+        stale: false,
+        refreshedAt: "2026-09-01T00:00:00.000Z",
+        sourcesTried: ["api"],
+      },
     };
     const report = await createOpenRouterAdapter({
       credential: () => ({
