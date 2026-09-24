@@ -168,7 +168,7 @@ function readCachedRecord(
  * The stamp is the stored id, not the vendor response id: those can differ
  * while the same token is live, and a later failed probe only has the store.
  * An unstamped snapshot, or a reading whose tried credentials name no account,
- * proves nothing either way and is served as before.
+ * proves nothing either way and cannot be served as stale.
  */
 export function readCachedCodexProvider(
   accountKey: string | undefined,
@@ -177,7 +177,7 @@ export function readCachedCodexProvider(
   const record = readCachedRecord("codex", accountKey);
   if (!record) return undefined;
   const contextId = record.credentialContextId;
-  if (!contextId || accountIds.length === 0) return record.snapshot;
+  if (!contextId || accountIds.length === 0) return undefined;
   return accountIds.some((id) => codexAccountContextId(id) === contextId)
     ? record.snapshot
     : undefined;
