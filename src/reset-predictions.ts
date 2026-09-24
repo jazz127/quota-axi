@@ -100,8 +100,7 @@ export async function fetchResetPredictions(
         });
         if (!response.ok) return { source, verdict: "unavailable" };
         const body = await response.text();
-        if (body.length > 262_144)
-          return { source, verdict: "unavailable" };
+        if (body.length > 262_144) return { source, verdict: "unavailable" };
         const probability = parseResetPrediction(source, JSON.parse(body), now);
         if (probability === undefined)
           return { source, verdict: "unavailable" };
