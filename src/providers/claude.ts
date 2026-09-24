@@ -224,6 +224,12 @@ type ClaudeQuotaPass =
       definitiveFailureIsEnvOnly: boolean;
     };
 
+type AttemptFailure = {
+  failure: ClaudeFailure;
+  contextId?: string;
+  source?: ClaudeCredentials["source"];
+};
+
 export async function fetchQuota(
   options: ProviderOptions,
 ): Promise<ProviderQuota> {
@@ -638,17 +644,14 @@ async function attemptClaudeQuota(
     });
   }
 
-  let definitiveFailure: ClaudeFailure | undefined;
-  let definitiveFailureIsEnv = false;
-  let transientFailure: ClaudeFailure | undefined;
-  let transientFailureIsEnv = false;
-  let cacheContextId = claudeCredentialContextId();
-  let confirmedExpiryFailure: ClaudeFailure | undefined;
+  let definitiveFailure: AttemptFailure | undefined;
+  let transientFailure: AttemptFailure | undefined;
+  let confirmedExpiryFailure: AttemptFailure | undefined;
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
       const credential = state.credentials;
-      cacheContextId =
+      const credentialContextId =
         credential.source === "pi:anthropic"
           ? claudePiContextId(credential.accessToken)
           : claudeCredentialContextId();
@@ -720,16 +723,23 @@ async function attemptClaudeQuota(
               error: native.error,
               degraded: false,
             };
-            transientFailure = new ClaudeFailure(native.error, {
-              status: native.status,
-              retryAfter: native.retryAfter,
-              authUsable: true,
-              windows: native.windows,
-            });
+            transientFailure = {
+              failure: new ClaudeFailure(native.error, {
+                status: native.status,
+                retryAfter: native.retryAfter,
+                authUsable: true,
+                windows: native.windows,
+              }),
+              contextId: credentialContextId,
+              source: credential.source,
+            };
           } else {
-            transientFailure = failure;
+            transientFailure = {
+              failure,
+              contextId: credentialContextId,
+              source: credential.source,
+            };
           }
-          transientFailureIsEnv = true;
           break;
         }
         if (softRefreshable || failure.definitiveAuth) {
@@ -740,8 +750,11 @@ async function attemptClaudeQuota(
           // wins, whichever class it is: a bystander file must not speak for
           // the session the source order names first.
           if (!definitiveFailure) {
-            definitiveFailure = failure;
-            definitiveFailureIsEnv = credential.source === "env";
+            definitiveFailure = {
+              failure,
+              contextId: credentialContextId,
+              source: credential.source,
+            };
           }
           // The env token names the account a live session actually uses, so
           // its own definitive rejection is a verdict on that session: it must
@@ -764,25 +777,28 @@ async function attemptClaudeQuota(
             (await confirmClaudeStoredExpiry(credential, attempts));
           if (expiryConfirmed) {
             if (!confirmedExpiryFailure && !definitiveFailure) {
-              confirmedExpiryFailure = new ClaudeFailure(
-                "Claude credential expired",
-                {
+              confirmedExpiryFailure = {
+                failure: new ClaudeFailure("Claude credential expired", {
                   status: "unavailable",
                   staleEligible: true,
                   ...(state.refreshable
                     ? { authStatus: "expired_refreshable" as const }
                     : {}),
-                },
-              ).withUsageFetchFailure();
+                }).withUsageFetchFailure(),
+                contextId: credentialContextId,
+                source: credential.source,
+              };
               // A confirmed expiry replaces an earlier env transient, as it
               // did before source-priority tracking was added. Later sibling
               // confirmations must not replace this first resolved verdict.
               transientFailure = confirmedExpiryFailure;
-              transientFailureIsEnv = credential.source === "env";
             }
           } else if (!expiryConfirmed) {
-            transientFailure = failure.withUsageFetchFailure();
-            transientFailureIsEnv = credential.source === "env";
+            transientFailure = {
+              failure: failure.withUsageFetchFailure(),
+              contextId: credentialContextId,
+              source: credential.source,
+            };
           }
           // The env token is an independent source the vendor merely resolves
           // first; its non-definitive failure must not withhold a still-untried
@@ -801,18 +817,22 @@ async function attemptClaudeQuota(
       (state): state is SkippedCredentialState => state.status === "skipped",
     );
     if (skipped) {
-      transientFailure = new ClaudeFailure(
-        skipped.source.error ?? "Claude quota unavailable",
-        { staleEligible: true },
-      );
+      transientFailure = {
+        failure: new ClaudeFailure(
+          skipped.source.error ?? "Claude quota unavailable",
+          { staleEligible: true },
+        ),
+      };
     } else {
       const invalid = credentialStates.some(
         (state) => state.status === "invalid",
       );
-      definitiveFailure = new ClaudeFailure(
-        invalid ? "credentials_invalid" : "credentials_missing",
-        { status: "auth_required", definitiveAuth: true },
-      );
+      definitiveFailure = {
+        failure: new ClaudeFailure(
+          invalid ? "credentials_invalid" : "credentials_missing",
+          { status: "auth_required", definitiveAuth: true },
+        ),
+      };
     }
   }
 
@@ -833,38 +853,46 @@ async function attemptClaudeQuota(
   // definitive verdict. The env token is the one narrowly scoped exception:
   // its own non-definitive failure must not mask a stored source's genuine
   // definitive rejection, since that stored verdict is still fully resolved.
-  let failure =
-    confirmedExpiryFailure ??
-    (transientFailureIsEnv ? definitiveFailure : undefined) ??
+  let selected = confirmedExpiryFailure ??
+    (transientFailure?.source === "env" ? definitiveFailure : undefined) ??
     transientFailure ??
-    definitiveFailure ??
-    new ClaudeFailure("Claude quota unavailable", { staleEligible: true });
+    definitiveFailure ?? {
+      failure: new ClaudeFailure("Claude quota unavailable", {
+        staleEligible: true,
+      }),
+    };
   // A failed Keychain discovery/read never saw the live session. A 401 from a leftover
   // oauth-file sidecar is not evidence the user is signed out of Claude.
   // A refreshable soft expiry from that sidecar is no better evidence.
   if (
     keychainFailure &&
-    (failure.definitiveAuth || failure.authStatus === "expired_refreshable") &&
-    !definitiveFailureIsEnv
+    (selected.failure.definitiveAuth ||
+      selected.failure.authStatus === "expired_refreshable") &&
+    definitiveFailure?.source !== "env"
   ) {
-    failure = new ClaudeFailure(keychainFailure.source.error!, {
-      staleEligible: true,
-    });
+    selected = {
+      failure: new ClaudeFailure(keychainFailure.source.error!, {
+        staleEligible: true,
+      }),
+      contextId: claudeCredentialContextId(),
+      source: "keychain",
+    };
   }
 
   return {
     kind: "failure",
-    failure,
+    failure: selected.failure,
     refreshableExpiredRejected:
-      failure === definitiveFailure &&
-      failure.authStatus === "expired_refreshable",
+      selected === definitiveFailure &&
+      selected.failure.authStatus === "expired_refreshable" &&
+      (selected.source === "oauth-file" || selected.source === "keychain"),
     keychainWithheld: credentialStates.some(
       (state) =>
         state.status === "skipped" && state.source.source === "keychain",
     ),
-    cacheContextId,
+    cacheContextId: selected.contextId,
     definitiveFailureIsEnvOnly:
-      failure === definitiveFailure && definitiveFailureIsEnv,
+      selected === definitiveFailure && selected.source === "env",
   };
 }
 
