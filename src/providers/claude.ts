@@ -25,6 +25,7 @@ import type {
   AuthProviderReport,
   AuthSourceReport,
   ProviderAdapter,
+  ProviderAuthStatus,
   ProviderOptions,
   ProviderQuota,
   ProviderStatus,
@@ -33,6 +34,7 @@ import type {
 } from "../types.js";
 import {
   failedProvider,
+  servableStaleWindows,
   sourceNames,
   statusFromError,
   successProvider,
@@ -47,6 +49,15 @@ import {
 } from "./delegated-refresh.js";
 import { withUsageFetchFailure } from "./usage-fetch-failure.js";
 import { fetchClaudeNativeQuota } from "./claude-native-quota.js";
+import {
+  createPiAnthropicCredentialBroker,
+  PI_ANTHROPIC_SOURCE,
+  type PiAnthropicCredentialResolution,
+} from "./pi-anthropic-credential.js";
+import {
+  claudePiContextId,
+  stampClaudePiContext,
+} from "./claude-cache-context.js";
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_API_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -66,7 +77,7 @@ const FIVE_HOURS_SECONDS = 18_000;
 const SEVEN_DAYS_SECONDS = 604_800;
 
 type ClaudeCredentials = {
-  source: "env" | "oauth-file" | "keychain";
+  source: "env" | "oauth-file" | "keychain" | "pi:anthropic";
   accessToken: string;
   plan?: string;
   expiresAt?: number;
@@ -143,6 +154,7 @@ type ClaudeFailureOptions = {
   staleEligible?: boolean;
   retryAfter?: string;
   authUsable?: boolean;
+  authStatus?: ProviderAuthStatus;
   envProfileScopeDenied?: boolean;
   windows?: QuotaWindow[];
 };
@@ -202,6 +214,7 @@ type ClaudeQuotaPass =
       refreshableExpiredRejected: boolean;
       /** A Keychain value read was withheld, so its store cannot be re-read. */
       keychainWithheld: boolean;
+      cacheContextId?: string;
       /**
        * The reported failure is the environment token's own definitive
        * rejection, reached with no stored candidate ever tried. It must not
@@ -252,7 +265,7 @@ export async function fetchQuota(
   return failureReport(
     pass.failure,
     attempts,
-    credentialContextId,
+    pass.cacheContextId ?? credentialContextId,
     claudeEnvOauthToken() !== undefined,
     pass.definitiveFailureIsEnvOnly,
   );
@@ -509,6 +522,21 @@ function isLiveClaudeCodeProcess(commandLine: string): boolean {
 }
 
 /**
+ * A stored-expired session that still carries a refresh token and was rejected
+ * is soft expiry, not a sign-out (Kimi and Grok report the same class): status
+ * `unavailable`, `authStatus: expired_refreshable`, and the cache survives.
+ * Only presence of the refresh token was inspected; rotation stays the Claude
+ * CLI's.
+ */
+function refreshableExpiryFailure(): ClaudeFailure {
+  return new ClaudeFailure("Claude access token expired", {
+    status: "unavailable",
+    staleEligible: true,
+    authStatus: "expired_refreshable",
+  });
+}
+
+/**
  * The vendor outran the wait and was left running, so quota-axi does not know
  * what the credential store now holds. It refuses to turn that into a sign-out
  * verdict: the report is an unmeasured provider (stale cache when one applies),
@@ -577,6 +605,13 @@ async function attemptClaudeQuota(
         )
           return 1;
       }
+      // Keep the established stored-source precedence stable when Pi also
+      // has an Anthropic entry; expiry metadata must not make the new sibling
+      // outrank Claude Code's own stores.
+      const storedOrder = ["keychain", "oauth-file", "pi:anthropic"];
+      const aOrder = storedOrder.indexOf(a.credentials.source);
+      const bOrder = storedOrder.indexOf(b.credentials.source);
+      if (aOrder !== bOrder) return aOrder - bOrder;
       return (b.credentials.expiresAt ?? 0) - (a.credentials.expiresAt ?? 0);
     });
 
@@ -607,11 +642,16 @@ async function attemptClaudeQuota(
   let definitiveFailureIsEnv = false;
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
-  let refreshableExpiredRejected = false;
+  let cacheContextId = claudeCredentialContextId();
+  let confirmedExpiryFailure: ClaudeFailure | undefined;
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
       const credential = state.credentials;
+      cacheContextId =
+        credential.source === "pi:anthropic"
+          ? claudePiContextId(credential.accessToken)
+          : claudeCredentialContextId();
       attempts.push({ source: credential.source, status: "failed" });
       try {
         const quota = await fetchOauthUsage(credential);
@@ -620,22 +660,30 @@ async function attemptClaudeQuota(
           status: "success",
         };
         attempts.push(oauthProfileAttempt(quota.identityError));
+        const report = successProvider({
+          provider: "claude",
+          label: "Claude",
+          source: "oauth",
+          plan: quota.plan,
+          account: quota.account,
+          windows: quota.windows,
+          refreshedAt: quota.refreshedAt,
+          sourcesTried: sourceNames(attempts),
+          attempts,
+        });
+        if (credential.source === "pi:anthropic")
+          stampClaudePiContext(report, credential.accessToken);
         return {
           kind: "success",
-          report: successProvider({
-            provider: "claude",
-            label: "Claude",
-            source: "oauth",
-            plan: quota.plan,
-            account: quota.account,
-            windows: quota.windows,
-            refreshedAt: quota.refreshedAt,
-            sourcesTried: sourceNames(attempts),
-            attempts,
-          }),
+          report,
         };
       } catch (error) {
-        const failure = claudeFailureFor(error);
+        let failure = claudeFailureFor(error);
+        const softRefreshable =
+          failure.definitiveAuth &&
+          state.status === "expired" &&
+          state.refreshable;
+        if (softRefreshable) failure = refreshableExpiryFailure();
         attempts[attempts.length - 1] = {
           source: credential.source,
           status: "failed",
@@ -684,13 +732,16 @@ async function attemptClaudeQuota(
           transientFailureIsEnv = true;
           break;
         }
-        if (failure.definitiveAuth) {
+        if (softRefreshable || failure.definitiveAuth) {
+          // A stored-expired session that still carries a refresh token is
+          // rejected only because its access token lapsed; the vendor rotates
+          // it, so it is not a sign-out and never retires the cache. Among
+          // resolved rejections the highest-priority candidate's verdict
+          // wins, whichever class it is: a bystander file must not speak for
+          // the session the source order names first.
           if (!definitiveFailure) {
             definitiveFailure = failure;
             definitiveFailureIsEnv = credential.source === "env";
-          }
-          if (state.status === "expired" && state.refreshable) {
-            refreshableExpiredRejected = true;
           }
           // The env token names the account a live session actually uses, so
           // its own definitive rejection is a verdict on that session: it must
@@ -711,13 +762,28 @@ async function attemptClaudeQuota(
             state.status === "expired" &&
             failure.status === "rate_limited" &&
             (await confirmClaudeStoredExpiry(credential, attempts));
-          transientFailure = expiryConfirmed
-            ? new ClaudeFailure("Claude credential expired", {
-                status: "unavailable",
-                staleEligible: true,
-              }).withUsageFetchFailure()
-            : failure.withUsageFetchFailure();
-          transientFailureIsEnv = credential.source === "env";
+          if (expiryConfirmed) {
+            if (!confirmedExpiryFailure && !definitiveFailure) {
+              confirmedExpiryFailure = new ClaudeFailure(
+                "Claude credential expired",
+                {
+                  status: "unavailable",
+                  staleEligible: true,
+                  ...(state.refreshable
+                    ? { authStatus: "expired_refreshable" as const }
+                    : {}),
+                },
+              ).withUsageFetchFailure();
+              // A confirmed expiry replaces an earlier env transient, as it
+              // did before source-priority tracking was added. Later sibling
+              // confirmations must not replace this first resolved verdict.
+              transientFailure = confirmedExpiryFailure;
+              transientFailureIsEnv = credential.source === "env";
+            }
+          } else if (!expiryConfirmed) {
+            transientFailure = failure.withUsageFetchFailure();
+            transientFailureIsEnv = credential.source === "env";
+          }
           // The env token is an independent source the vendor merely resolves
           // first; its non-definitive failure must not withhold a still-untried
           // stored source. An unresolved (transient) failure from a stored
@@ -768,13 +834,19 @@ async function attemptClaudeQuota(
   // its own non-definitive failure must not mask a stored source's genuine
   // definitive rejection, since that stored verdict is still fully resolved.
   let failure =
+    confirmedExpiryFailure ??
     (transientFailureIsEnv ? definitiveFailure : undefined) ??
     transientFailure ??
     definitiveFailure ??
     new ClaudeFailure("Claude quota unavailable", { staleEligible: true });
   // A failed Keychain discovery/read never saw the live session. A 401 from a leftover
   // oauth-file sidecar is not evidence the user is signed out of Claude.
-  if (keychainFailure && failure.definitiveAuth && !definitiveFailureIsEnv) {
+  // A refreshable soft expiry from that sidecar is no better evidence.
+  if (
+    keychainFailure &&
+    (failure.definitiveAuth || failure.authStatus === "expired_refreshable") &&
+    !definitiveFailureIsEnv
+  ) {
     failure = new ClaudeFailure(keychainFailure.source.error!, {
       staleEligible: true,
     });
@@ -783,11 +855,14 @@ async function attemptClaudeQuota(
   return {
     kind: "failure",
     failure,
-    refreshableExpiredRejected,
+    refreshableExpiredRejected:
+      failure === definitiveFailure &&
+      failure.authStatus === "expired_refreshable",
     keychainWithheld: credentialStates.some(
       (state) =>
         state.status === "skipped" && state.source.source === "keychain",
     ),
+    cacheContextId,
     definitiveFailureIsEnvOnly:
       failure === definitiveFailure && definitiveFailureIsEnv,
   };
@@ -836,6 +911,7 @@ function failureReport(
     ...(observedWindows ? { source: "cli" } : {}),
   });
   if (failure.authUsable) report.state.authStatus = "usable";
+  if (failure.authStatus) report.state.authStatus = failure.authStatus;
   if (observedWindows) report.windows = observedWindows;
   return report;
 }
@@ -859,10 +935,9 @@ function staleClaudeReport(
   const ageMilliseconds = now - refreshedAt;
   if (ageMilliseconds >= SEVEN_DAYS_MS) return undefined;
 
-  const windows = cached.windows.filter((window) => {
-    if (window.resetsAt !== undefined) {
-      const resetsAt = Date.parse(window.resetsAt);
-      return Number.isFinite(resetsAt) && resetsAt > now;
+  const windows = servableStaleWindows(cached, now).filter((window) => {
+    if (window.resetsAt && Number.isFinite(Date.parse(window.resetsAt))) {
+      return true;
     }
     const maxAge = resetlessWindowMaxAge(window);
     return maxAge !== undefined && ageMilliseconds < maxAge;
@@ -885,6 +960,7 @@ function staleClaudeReport(
     },
     attempts,
   };
+  if (failure.authStatus) report.state.authStatus = failure.authStatus;
   return failure.usageFetchFailure ? withUsageFetchFailure(report) : report;
 }
 
@@ -892,11 +968,7 @@ function resetlessWindowMaxAge(window: QuotaWindow): number | undefined {
   if (window.kind === "weekly" || window.kind === "model") {
     return SEVEN_DAYS_MS;
   }
-  if (
-    window.kind === "session" ||
-    window.kind === "monthly" ||
-    window.kind === "credits"
-  ) {
+  if (window.kind === "session" || window.kind === "monthly") {
     return FIVE_HOURS_MS;
   }
   return undefined;
@@ -1113,6 +1185,13 @@ async function readCredentialStates(
       ),
     );
 
+  const piAnthropicState = piAnthropicCredentialState(
+    await piAnthropicBroker.resolve(),
+  );
+  // Pi is an optional sibling store. Its absence must not add noise to the
+  // established Claude source/attempt report.
+  if (piAnthropicState.status !== "missing") states.push(piAnthropicState);
+
   if (process.platform === "darwin") {
     const selection = await listKeychainItem(locations);
     if (selection.status === "missing") {
@@ -1131,6 +1210,70 @@ async function readCredentialStates(
   }
 
   return states;
+}
+
+const piAnthropicBroker = createPiAnthropicCredentialBroker();
+
+function piAnthropicCredentialState(
+  resolution: PiAnthropicCredentialResolution,
+): CredentialState {
+  const source = PI_ANTHROPIC_SOURCE;
+  if (resolution.status === "available") {
+    return {
+      status: "available",
+      credentials: {
+        source,
+        accessToken: resolution.credentials.accessToken,
+        expiresAt: resolution.credentials.expiresAtMs,
+      },
+    };
+  }
+  if (resolution.status === "expired") {
+    if (!resolution.credentials) {
+      return {
+        status: "invalid",
+        source: { source, status: "invalid", error: "invalid_credential" },
+      };
+    }
+    return {
+      status: "expired",
+      credentials: {
+        source,
+        accessToken: resolution.credentials.accessToken,
+        expiresAt: resolution.credentials.expiresAtMs,
+      },
+      source: { source, status: "expired" },
+      refreshable: resolution.refreshable,
+    };
+  }
+  if (resolution.status === "missing") {
+    return { status: "missing", source: { source, status: "missing" } };
+  }
+  if (resolution.status === "invalid") {
+    return {
+      status: "invalid",
+      source: { source, status: "invalid", error: "invalid_credential" },
+    };
+  }
+  if (resolution.status === "unsupported") {
+    return {
+      status: "invalid",
+      source: {
+        source,
+        status: "invalid",
+        error: "unsupported_credential_type",
+      },
+    };
+  }
+  return {
+    status: "skipped",
+    degraded: true,
+    source: {
+      source,
+      status: "skipped",
+      error: "credential_resolution_failed",
+    },
+  };
 }
 
 async function readSkippedKeychainCredentialState(
@@ -1835,6 +1978,7 @@ class ClaudeFailure extends Error {
   readonly staleEligible: boolean;
   readonly retryAfter: string | undefined;
   readonly authUsable: boolean;
+  readonly authStatus: ProviderAuthStatus | undefined;
   readonly envProfileScopeDenied: boolean;
   readonly windows: QuotaWindow[] | undefined;
   usageFetchFailure = false;
@@ -1850,6 +1994,7 @@ class ClaudeFailure extends Error {
     this.staleEligible = options.staleEligible ?? false;
     this.retryAfter = options.retryAfter;
     this.authUsable = options.authUsable ?? false;
+    this.authStatus = options.authStatus;
     this.envProfileScopeDenied = options.envProfileScopeDenied ?? false;
     this.windows = options.windows;
   }

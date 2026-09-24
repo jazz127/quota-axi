@@ -1,16 +1,14 @@
 import { createHash } from "node:crypto";
 import { chmodSync, renameSync, writeFileSync } from "node:fs";
-import {
-  cacheFilePath,
-  claudeCredentialContextId,
-  ensurePrivateParent,
-  readJsonFile,
-} from "./lib/fs.js";
+import { cacheFilePath, ensurePrivateParent, readJsonFile } from "./lib/fs.js";
 import { kimiReadingContextId } from "./providers/kimi-cache-context.js";
 import { commandCodeReadingContextId } from "./providers/commandcode-cache-context.js";
+import { devinReadingContextId } from "./providers/devin-cache-context.js";
 import { elevenLabsReadingContextId } from "./providers/elevenlabs-cache-context.js";
 import { miniMaxReadingContextId } from "./providers/minimax-cache-context.js";
+import { openRouterReadingContextId } from "./providers/openrouter-cache-context.js";
 import { isPiCodexSource } from "./providers/pi-codex-credential.js";
+import { claudeReadingContextId } from "./providers/claude-cache-context.js";
 import type {
   ProviderId,
   ProviderQuota,
@@ -64,8 +62,8 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
  * Codex slot can be signed in to another ChatGPT account. A snapshot from one
  * such context says nothing about another, so each is stamped on write and
  * checked on stale reuse - strictly for Claude, Kimi, Command Code, MiniMax,
- * and ElevenLabs, whose identity a reading always has (and which skip write
- * and clear when that identity is missing), and on proven mismatch for Codex,
+ * ElevenLabs, and Devin, whose identity a reading always has (and which skip
+ * write and clear when that identity is missing), and on proven mismatch for Codex,
  * whose stored account id is optional.
  *
  * How that stamp is obtained is not the same question for each. A Claude
@@ -85,17 +83,20 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
  * source plus the deployment host its resolution implies. ElevenLabs publishes
  * a one-way digest of the key that answered, because that key is the only thing
  * naming the subscription and its single slot would otherwise be shared by
- * every key.
+ * every key. Devin publishes the answering source, host, and a one-way digest
+ * of the session token, because a new login replaces that token.
  */
 const CONTEXT_SCOPED_PROVIDERS: Partial<
   Record<ProviderId, (provider: ProviderQuota) => string | undefined>
 > = {
-  claude: claudeCredentialContextId,
+  claude: claudeReadingContextId,
   kimi: kimiReadingContextId,
   commandcode: commandCodeReadingContextId,
   elevenlabs: elevenLabsReadingContextId,
+  devin: devinReadingContextId,
   codex: codexStampContextId,
   minimax: miniMaxReadingContextId,
+  openrouter: openRouterReadingContextId,
 };
 
 /**
@@ -225,6 +226,13 @@ export function readCachedMiniMaxProvider(
   return readCachedProviderInContext("minimax", contextId);
 }
 
+/** OpenRouter cache reuse is bound to the source and credential that answered. */
+export function readCachedOpenRouterProvider(
+  contextId: string,
+): ProviderQuota | undefined {
+  return readCachedProviderInContext("openrouter", contextId);
+}
+
 /**
  * ElevenLabs stale quota may only be reused when the cache record proves it was
  * captured with the same API key, so one subscription's characters can never
@@ -234,6 +242,17 @@ export function readCachedElevenLabsProvider(
   contextId: string,
 ): ProviderQuota | undefined {
   return readCachedProviderInContext("elevenlabs", contextId);
+}
+
+/**
+ * Devin stale quota may only be reused when the cache record proves it was
+ * captured for the same source, host, and key, so one login's windows can
+ * never stand in for another's.
+ */
+export function readCachedDevinProvider(
+  contextId: string,
+): ProviderQuota | undefined {
+  return readCachedProviderInContext("devin", contextId);
 }
 
 function readCachedProviderInContext(
@@ -256,24 +275,50 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
         provider.source === "cli"
       ),
   );
+  const existingProviders = readCacheProviders();
+  const existingByProvider = new Map(
+    existingProviders.map((provider) => [
+      cacheIdentity(provider.snapshot),
+      provider,
+    ]),
+  );
+  const preservesOpenRouter = (provider: ProviderQuota): boolean => {
+    if (provider.provider !== "openrouter" || provider.state.status !== "fresh")
+      return false;
+    const existing = existingByProvider.get(cacheIdentity(provider));
+    return Boolean(
+      existing?.snapshot.credits !== undefined &&
+      existing.credentialContextId !== undefined &&
+      existing.credentialContextId === openRouterReadingContextId(),
+    );
+  };
   const clearProviders = new Set(
     providers
       .filter(
         (provider) =>
           provider.state.status === "fresh" &&
           provider.windows.length === 0 &&
-          !missingRequiredContext(provider.provider),
+          !missingRequiredContext(provider.provider) &&
+          !preservesOpenRouter(provider),
       )
       .map(cacheIdentity),
   );
   const cacheable = providers
-    .map(toCacheProvider)
+    .map((provider) => {
+      if (!preservesOpenRouter(provider) || provider.credits !== undefined)
+        return toCacheProvider(provider);
+      const existing = existingByProvider.get(cacheIdentity(provider));
+      return toCacheProvider({
+        ...provider,
+        credits: existing?.snapshot.credits,
+      });
+    })
     .filter((provider): provider is CachedProvider => Boolean(provider));
 
   const file = cacheFilePath();
   const byProvider = new Map<string, CachedProvider>();
   let clearedExisting = false;
-  for (const provider of readCacheProviders()) {
+  for (const provider of existingProviders) {
     if (clearProviders.has(cacheIdentity(provider.snapshot))) {
       clearedExisting = true;
       continue;
@@ -281,8 +326,9 @@ export function writeCachedProviders(providers: ProviderQuota[]): void {
     byProvider.set(cacheIdentity(provider.snapshot), provider);
   }
   if (cacheable.length === 0 && !clearedExisting) return;
-  for (const provider of cacheable)
+  for (const provider of cacheable) {
     byProvider.set(cacheIdentity(provider.snapshot), provider);
+  }
   const merged = [...byProvider.values()].sort(
     (a, b) =>
       PROVIDER_IDS.indexOf(a.snapshot.provider) -
@@ -379,7 +425,7 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
   )?.snapshot;
   if (!snapshot) return undefined;
   const contextId = CONTEXT_SCOPED_PROVIDERS[provider.provider]?.(provider);
-  // Claude, Kimi, Command Code, MiniMax, and ElevenLabs require a published
+  // Claude, Kimi, Command Code, MiniMax, ElevenLabs, and Devin require a published
   // identity; Codex stamps are optional and withheld only on proven mismatch
   // at read time.
   if (
@@ -395,8 +441,8 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
 }
 
 function missingRequiredContext(provider: ProviderId): boolean {
-  // Codex stamps are optional; Claude, Kimi, Command Code, MiniMax, and
-  // ElevenLabs must
+  // Codex stamps are optional; Claude, Kimi, Command Code, MiniMax, ElevenLabs,
+  // and Devin must
   // not clear when the current reading has no published context identity.
   if (provider === "codex") return false;
   const scope = CONTEXT_SCOPED_PROVIDERS[provider];
@@ -635,6 +681,9 @@ function normalizeCachedWindow(raw: unknown): QuotaWindow | undefined {
   assignString(result, "resetsAt", data.resetsAt);
   assignString(result, "resetText", data.resetText);
   assignNumber(result, "windowSeconds", data.windowSeconds);
+  assignNumber(result, "used", data.used);
+  assignNumber(result, "limit", data.limit);
+  assignNumber(result, "remaining", data.remaining);
   assignNumber(result, "spentUsd", data.spentUsd);
   assignNumber(result, "limitUsd", data.limitUsd);
   return result;

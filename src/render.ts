@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { encode } from "@toon-format/toon";
 import { quotaHelpLines } from "./advice.js";
 import { accountColumns } from "./providers/accounts.js";
@@ -76,16 +77,29 @@ type ProviderBlocks = {
 
 /**
  * Render the default decision-shaped report: one `quota[]` row per measurable
- * scope, plus the sparse `exhaustion[]` and `attention[]` blocks. `--full` adds
- * the audit blocks. Demotion happens here, never at computation, so `--tui` and
- * the normalized model keep every field.
+ * scope, plus the sparse `exhaustion[]` and `attention[]` blocks. Providers
+ * named in `omitProviderIds` drop out of those blocks and are counted in one
+ * help line. `--full` ignores that list (it adds the audit blocks and never
+ * subtracts) and prints no omission line. Demotion happens here, never at
+ * computation, so `--tui` and the normalized model keep every field.
  */
 export function renderQuotaToon(
   response: QuotaAxiResponse,
   binPath: string,
   full: boolean,
+  omitProviderIds: readonly ProviderId[] = [],
 ): string {
-  const { quota, exhaustion, attention } = quotaBlocks(response);
+  const omit = new Set(full ? [] : omitProviderIds);
+  const shown =
+    omit.size === 0
+      ? response
+      : {
+          ...response,
+          providers: response.providers.filter(
+            (provider) => !omit.has(provider.provider),
+          ),
+        };
+  const { quota, exhaustion, attention } = quotaBlocks(shown);
   const blocks = [
     encode({
       bin: collapseHome(binPath),
@@ -99,16 +113,20 @@ export function renderQuotaToon(
   ];
 
   if (full) blocks.push(...auditBlocks(response));
-  blocks.push(renderHelp(quotaHelpLines(response)));
+  blocks.push(renderHelp(quotaHelpLines(response, omit.size)));
   return blocks.filter(Boolean).join("\n");
 }
 
 /**
- * Contract invariant: every requested provider/account lane appears at least
- * once, in `quota[]` or `attention[]` or both, and never in metric order.
+ * Contract invariant: every provider this function is given appears at least
+ * once, in `quota[]` or `attention[]`, and never in metric order. Default
+ * TOON omission of not-set-up providers happens before this runs.
  */
 function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
   const blocks: ProviderBlocks = { quota: [], exhaustion: [], attention: [] };
+  const codexAccountCount = response.providers.filter(
+    (provider) => provider.provider === "codex",
+  ).length;
   for (const provider of response.providers) {
     const scopes = provider.quotaSemantics?.effectiveAvailability ?? [];
     const scopeAttention: AttentionRow[] = [];
@@ -146,10 +164,34 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
     blocks.attention.push(
       ...providerAttention(provider, measured, scopeAttention.length),
     );
+    if (provider.provider === "codex") {
+      const identity = codexAccountLabel(provider);
+      const location = provider.account?.credentialHome
+        ? `home ${collapseHome(provider.account.credentialHome)}`
+        : `source ${provider.account?.credentialSource ?? provider.source ?? "unknown"}`;
+      blocks.attention.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "account_source",
+        detail: `${identity} · ${location} · ${codexAccountCount === 1 ? "single Codex account shown" : `Codex account ${provider.accountKey ?? "default"} of ${codexAccountCount} shown`}`,
+        remedy: NONE,
+      });
+    }
     blocks.attention.push(...shareRows(provider));
     blocks.attention.push(...scopeAttention);
   }
   return blocks;
+}
+
+function codexAccountLabel(provider: ProviderQuota): string {
+  const label =
+    provider.account?.label ??
+    (provider.account?.accountId
+      ? `#${createHash("sha256").update(provider.account.accountId).digest("hex").slice(0, 8)}`
+      : undefined) ??
+    provider.accountKey ??
+    provider.accountKeys?.[0];
+  return label ? `account ${label}` : "account identity unavailable";
 }
 
 function quotaRow(
@@ -272,7 +314,10 @@ function providerStateRows(
     });
   }
   if (measured) {
-    const credits = freshCreditBalance(provider);
+    const credits =
+      provider.provider === "openrouter"
+        ? creditBalance(provider)
+        : freshCreditBalance(provider);
     if (credits) {
       rows.push({
         ...providerColumns(provider),
@@ -280,6 +325,15 @@ function providerStateRows(
         kind: "credits",
         detail: `${credits}`,
         remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
+      });
+    }
+    if (provider.provider === "openrouter" && provider.state.error) {
+      rows.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "credits",
+        detail: provider.state.error,
+        remedy: NONE,
       });
     }
     return rows;
@@ -292,6 +346,15 @@ function providerStateRows(
     return rows;
   }
   const credits = creditBalance(provider);
+  if (provider.provider === "openrouter" && provider.state.error && !credits) {
+    rows.push({
+      ...providerColumns(provider),
+      scope: "all",
+      kind: "credits",
+      detail: provider.state.error,
+      remedy: NONE,
+    });
+  }
   if (credits) {
     rows.unshift({
       ...providerColumns(provider),
@@ -316,7 +379,8 @@ function providerStateRows(
 }
 
 /**
- * A provider that reports a raw credit balance has a real number to state.
+ * A provider that reports a raw credit balance has a real number to state,
+ * whether or not it also reports measurable scopes.
  * Naming it keeps the default report from hiding that evidence beside either
  * measurable or absent scopes, without inventing a percentage or a routing
  * bound from a balance that has no cap.
@@ -622,7 +686,22 @@ export function redactedResponse(
     ...response,
     providers: response.providers.map((provider) => ({
       ...provider,
-      account: undefined,
+      account:
+        provider.provider === "codex" && provider.account
+          ? {
+              label: provider.account?.label,
+              ...(provider.account?.accountId
+                ? {
+                    label: `#${createHash("sha256").update(provider.account.accountId).digest("hex").slice(0, 8)}`,
+                  }
+                : {}),
+              credentialHome: provider.account?.credentialHome
+                ? collapseHome(provider.account.credentialHome)
+                : undefined,
+              credentialSource:
+                provider.account?.credentialSource ?? provider.source,
+            }
+          : undefined,
       attempts: undefined,
     })),
   };
@@ -637,8 +716,9 @@ export function redactedResponse(
 export function quotaJsonReport(
   response: QuotaAxiResponse,
   full: boolean,
+  laneAbsent: readonly boolean[] = [],
 ): QuotaAxiResponse {
-  const redacted = redactedResponse(response, full);
+  const redacted = redactedResponse(markNotSetUp(response, laneAbsent), full);
   if (full) return redacted;
   return {
     ...redacted,
@@ -656,6 +736,24 @@ export function quotaJsonReport(
         sourcesTried: undefined,
       },
     })),
+  };
+}
+
+/**
+ * Sparse `notSetUp: true` on lanes the caller already classified absent.
+ * The flags are computed before redaction strips `attempts`. An empty list
+ * leaves the model untouched, so a caller that has not classified adds nothing.
+ */
+function markNotSetUp(
+  response: QuotaAxiResponse,
+  laneAbsent: readonly boolean[],
+): QuotaAxiResponse {
+  if (!laneAbsent.some(Boolean)) return response;
+  return {
+    ...response,
+    providers: response.providers.map((provider, index) =>
+      laneAbsent[index] ? { ...provider, notSetUp: true } : provider,
+    ),
   };
 }
 
