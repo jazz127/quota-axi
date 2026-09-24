@@ -247,7 +247,13 @@ async function fetchQuota(dependencies: Dependencies): Promise<ProviderQuota> {
         continue;
       }
       if (cached) {
-        return staleFromCache(cached, code, sourceNames(attempts), attempts);
+        const stale = staleFromCache(
+          cached,
+          code,
+          sourceNames(attempts),
+          attempts,
+        );
+        if (stale) return stale;
       }
       return failedProvider({
         provider: "openrouter",
