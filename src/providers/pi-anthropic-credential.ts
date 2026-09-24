@@ -2,6 +2,7 @@ import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolvePiAuthFilePath } from "../lib/pi-agent-dir.js";
 import { classifyPiAuthEntry } from "../lib/pi-auth-store.js";
+import { traceInput } from "../lib/input-trace.js";
 import type { ProviderSource } from "../types.js";
 
 export const PI_ANTHROPIC_PROVIDER_ID = "anthropic";
@@ -143,6 +144,7 @@ async function readBoundedFile(
   path: string,
   maxBytes: number,
 ): Promise<Buffer> {
+  traceInput(path);
   const file = await open(path, "r");
   try {
     const contents = new Uint8Array(maxBytes + 1);
