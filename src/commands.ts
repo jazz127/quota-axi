@@ -5,7 +5,10 @@ import { writeCachedProviders } from "./cache.js";
 import { withQuotaSemantics } from "./interpretation.js";
 import { createModelsResponse, MODEL_CATALOG_PROVIDER_IDS } from "./models.js";
 import { providerPresence } from "./lib/source-attempts.js";
-import { readTuiShowPreference } from "./lib/user-config.js";
+import {
+  readResetPredictionSources,
+  readTuiShowPreference,
+} from "./lib/user-config.js";
 import { nowIso } from "./lib/time.js";
 import {
   fetchAccountQuotas,
@@ -27,6 +30,11 @@ import {
   type TuiColorDepth,
 } from "./tui.js";
 import { scrollHint } from "./tui-viewport.js";
+import {
+  fetchResetPredictions,
+  type ResetPredictionAggregate,
+  type ResetPredictionSource,
+} from "./reset-predictions.js";
 import type {
   AuthProviderReport,
   ProviderId,
@@ -49,6 +57,7 @@ export async function quotaCommand(
   const flags = parseFlags(args);
   validateProfileOnly(flags);
   validateClaudeInference(flags);
+  const resetSources = readResetPredictionSources();
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.profileOnly ? false : flags.allowKeychainPrompt,
     refreshCredentials: flags.profileOnly ? false : !flags.noCredentialRefresh,
@@ -56,7 +65,7 @@ export async function quotaCommand(
     ...(flags.profileOnly ? { credentialMode: "profile-only" as const } : {}),
   };
 
-  if (flags.tui) return quotaTuiReport(flags, options);
+  if (flags.tui) return quotaTuiReport(flags, options, resetSources);
 
   const response = await loadQuota(flags.providers, options, false);
   // Presence reads source attempts, which redaction removes, so both the JSON
@@ -74,6 +83,11 @@ export async function quotaCommand(
       2,
     );
   }
+  const resetPrediction = await loadResetPrediction(
+    flags.providers,
+    options,
+    resetSources,
+  );
   return renderQuotaToon(
     redactedResponse(response, flags.full),
     binPath,
@@ -81,7 +95,22 @@ export async function quotaCommand(
     flags.full || flags.explicitProviders
       ? []
       : omittedAbsentProviderIds(response.providers, laneAbsent),
+    resetPrediction,
   );
+}
+
+function loadResetPrediction(
+  providers: readonly ProviderId[],
+  options: ProviderOptions,
+  sources: readonly ResetPredictionSource[],
+): Promise<ResetPredictionAggregate | undefined> {
+  if (
+    sources.length === 0 ||
+    !providers.includes("codex") ||
+    options.credentialMode === "profile-only"
+  )
+    return Promise.resolve(undefined);
+  return fetchResetPredictions(sources);
 }
 
 /**
@@ -114,6 +143,7 @@ function omittedAbsentProviderIds(
 async function quotaTuiReport(
   flags: QuotaFlags,
   options: ProviderOptions,
+  resetSources: readonly ResetPredictionSource[],
 ): Promise<string> {
   // A human display preference, so it is read only on this path: TOON and
   // JSON never see it.
@@ -128,24 +158,42 @@ async function quotaTuiReport(
   // providers that are not set up fold into one line until `a` or --all.
   let showNotSetUp = flags.all || flags.explicitProviders;
   let notSetUp = 0;
-  const frame = (response: QuotaAxiResponse): string => {
+  type TuiFrame = {
+    response: QuotaAxiResponse;
+    resetPrediction?: ResetPredictionAggregate;
+  };
+  const load = async (live: boolean): Promise<TuiFrame> => {
+    const response = await loadQuota(flags.providers, options, live);
+    const resetPrediction = await loadResetPrediction(
+      flags.providers,
+      options,
+      resetSources,
+    );
+    return { response, ...(resetPrediction ? { resetPrediction } : {}) };
+  };
+  const frame = ({ response, resetPrediction }: TuiFrame): string => {
     // Presence reads the source attempts, which redaction removes, so it is
     // derived from the complete model before the renderer sees the report.
     const presence = response.providers.map((provider) =>
       providerPresence(provider, PROVIDERS[provider.provider]),
     );
-    notSetUp = presence.filter((entry) => entry === "absent").length;
+    notSetUp = presence.filter(
+      (entry, index) =>
+        entry === "absent" &&
+        !(resetPrediction && response.providers[index]?.provider === "codex"),
+    ).length;
     return renderQuotaTui(redactedResponse(response, flags.full), {
       ...terminal(),
       full: flags.full,
       presence,
       showNotSetUp,
       show,
+      resetPrediction,
     });
   };
 
   if (flags.once || !isInteractiveTerminal()) {
-    return frame(await loadQuota(flags.providers, options, false));
+    return frame(await load(false));
   }
 
   const refreshSeconds = flags.refreshSeconds ?? DEFAULT_REFRESH_SECONDS;
@@ -154,8 +202,8 @@ async function quotaTuiReport(
     flags.explicitProviders || notSetUp === 0
       ? []
       : [`a ${showNotSetUp ? "hide" : "show"} not set up`];
-  const last = await runLiveTui<QuotaAxiResponse>({
-    load: () => loadQuota(flags.providers, options, true),
+  const last = await runLiveTui<TuiFrame>({
+    load: () => load(true),
     render: frame,
     status: (scroll) =>
       renderTuiHintLine(

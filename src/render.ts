@@ -5,6 +5,10 @@ import { accountColumns } from "./providers/accounts.js";
 import { collapseHome } from "./lib/fs.js";
 import { isUsageFetchFailure } from "./providers/usage-fetch-failure.js";
 import { SELECTION_SCALAR_KEY } from "./types.js";
+import {
+  resetPredictionWording,
+  type ResetPredictionAggregate,
+} from "./reset-predictions.js";
 import type {
   AuthProviderReport,
   BoundConflict,
@@ -88,8 +92,15 @@ export function renderQuotaToon(
   binPath: string,
   full: boolean,
   omitProviderIds: readonly ProviderId[] = [],
+  resetPrediction?: ResetPredictionAggregate,
 ): string {
-  const omit = new Set(full ? [] : omitProviderIds);
+  const omit = new Set(
+    full
+      ? []
+      : omitProviderIds.filter(
+          (id) => id !== "codex" || resetPrediction === undefined,
+        ),
+  );
   const shown =
     omit.size === 0
       ? response
@@ -99,7 +110,7 @@ export function renderQuotaToon(
             (provider) => !omit.has(provider.provider),
           ),
         };
-  const { quota, exhaustion, attention } = quotaBlocks(shown);
+  const { quota, exhaustion, attention } = quotaBlocks(shown, resetPrediction);
   const blocks = [
     encode({
       bin: collapseHome(binPath),
@@ -122,11 +133,15 @@ export function renderQuotaToon(
  * once, in `quota[]` or `attention[]`, and never in metric order. Default
  * TOON omission of not-set-up providers happens before this runs.
  */
-function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
+function quotaBlocks(
+  response: QuotaAxiResponse,
+  resetPrediction?: ResetPredictionAggregate,
+): ProviderBlocks {
   const blocks: ProviderBlocks = { quota: [], exhaustion: [], attention: [] };
   const codexAccountCount = response.providers.filter(
     (provider) => provider.provider === "codex",
   ).length;
+  let predictionShown = false;
   for (const provider of response.providers) {
     const scopes = provider.quotaSemantics?.effectiveAvailability ?? [];
     const scopeAttention: AttentionRow[] = [];
@@ -176,6 +191,16 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
         detail: `${identity} · ${location} · ${codexAccountCount === 1 ? "single Codex account shown" : `Codex account ${provider.accountKey ?? "default"} of ${codexAccountCount} shown`}`,
         remedy: NONE,
       });
+      if (resetPrediction && !predictionShown) {
+        blocks.attention.push({
+          ...providerColumns(provider),
+          scope: "all",
+          kind: "reset_prediction",
+          detail: `${resetPredictionWording(resetPrediction)} · unofficial; not account-specific; no guarantee · selected third parties contacted from your machine${resetPrediction.readings.some((reading) => reading.source === "codex-reset") ? " · Data: codex-reset.com (https://codex-reset.com/)" : ""}`,
+          remedy: NONE,
+        });
+        predictionShown = true;
+      }
     }
     blocks.attention.push(...shareRows(provider));
     blocks.attention.push(...scopeAttention);

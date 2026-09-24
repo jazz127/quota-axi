@@ -1,0 +1,23 @@
+HTTP/2 200 
+date: Thu, 24 Sep 2026 14:59:13 GMT
+content-type: application/json; charset=utf-8
+access-control-allow-origin: *
+access-control-expose-headers: Cache-Control, ETag
+age: 0
+cache-control: public, max-age=0, must-revalidate, s-maxage=60
+cf-cache-status: DYNAMIC
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=Su67R%2BCNz%2F4FuEsedkMQ4gv7xLXWY9zTeXTjBV5ZCbgPB6RRyj%2FFVyJX%2FoQ3fp3Zd4zgZjiHy%2FriMdveuH%2FkO6BRMpi33uubK4RS%2BF4aRsdf%2FAX1MRoWoSL3fM22LA86NrY%3D"}]}
+content-security-policy: default-src 'self'; base-uri 'self'; connect-src 'self' https://challenges.cloudflare.com https://cloudflareinsights.com https://www.google-analytics.com https://analytics.google.com https://*.google-analytics.com https://www.googletagmanager.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; frame-src https://challenges.cloudflare.com; img-src 'self' data: https://*.google-analytics.com https://www.googletagmanager.com; object-src 'none'; script-src 'self' https://challenges.cloudflare.com https://static.cloudflareinsights.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests
+cross-origin-opener-policy: same-origin
+permissions-policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()
+referrer-policy: strict-origin-when-cross-origin
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+x-content-type-options: nosniff
+x-frame-options: DENY
+x-robots-tag: noindex
+vary: accept-encoding
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+server: cloudflare
+cf-ray: a402a6d60ea1329b-BNE
+alt-svc: h3=":443"; ma=86400
+
