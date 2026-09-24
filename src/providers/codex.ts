@@ -106,6 +106,7 @@ type CodexAttemptCredential = {
 
 type NormalizedCodexQuota = {
   plan?: string;
+  resetsAvailable?: number;
   account?: ProviderQuota["account"];
   windows: QuotaWindow[];
   credits?: ProviderQuota["credits"];
@@ -1093,6 +1094,7 @@ function codexSuccessReport(
     label: "Codex",
     source,
     plan: quota.plan,
+    resetsAvailable: quota.resetsAvailable,
     account,
     windows: quota.windows,
     credits: quota.credits,
@@ -1280,6 +1282,7 @@ function piInspectionSource(
 export function normalizeCodexUsage(raw: unknown):
   | {
       plan?: string;
+      resetsAvailable?: number;
       account?: ProviderQuota["account"];
       windows: QuotaWindow[];
       credits?: ProviderQuota["credits"];
@@ -1318,8 +1321,10 @@ export function normalizeCodexUsage(raw: unknown):
 
   if (windows.length === 0) return undefined;
 
+  const resetsAvailable = availableCodexResets(data);
   return {
     plan: stringValue(data.plan_type) ?? stringValue(data.planType),
+    ...(resetsAvailable === undefined ? {} : { resetsAvailable }),
     account: {
       email: stringValue(data.email),
       accountId: stringValue(data.account_id) ?? stringValue(data.accountId),
@@ -1328,6 +1333,18 @@ export function normalizeCodexUsage(raw: unknown):
     credits: normalizeCredits(data.credits ?? rateLimit?.credits),
     refreshedAt: nowIso(),
   };
+}
+
+function availableCodexResets(
+  data: Record<string, unknown>,
+): number | undefined {
+  const summary = objectValue(
+    data.rate_limit_reset_credits ?? data.rateLimitResetCredits,
+  );
+  const count = summary?.available_count ?? summary?.availableCount;
+  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+    ? count
+    : undefined;
 }
 
 function resolveRateLimitContainer(
