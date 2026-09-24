@@ -7,6 +7,7 @@ import {
   inspectAccountAuth,
 } from "../../src/providers/accounts.js";
 import { quotaJsonReport, renderQuotaToon } from "../../src/render.js";
+import { renderQuotaTui } from "../../src/tui.js";
 import type { ProviderOptions } from "../../src/types.js";
 
 const original = {
@@ -159,6 +160,8 @@ describe("Codex native home discovery", () => {
       ],
     ]);
     expect(process.env.CODEX_HOME).toBe(join(root, "selected"));
+    expect(rows[2]?.account?.credentialHome).toBe(join(luna, "auth.json"));
+    expect(rows[3]?.account?.credentialHome).toBe(join(extra, "auth.json"));
     const toon = renderQuotaToon(
       {
         schemaVersion: 6,
@@ -169,7 +172,14 @@ describe("Codex native home discovery", () => {
       false,
     );
     expect(toon).toContain("codex-luna");
-    expect(toon).not.toContain(luna);
+    expect(toon).toContain("~/.codex-luna/auth.json");
+    const tui = renderQuotaTui({
+      schemaVersion: 6,
+      generatedAt: new Date().toISOString(),
+      providers: rows,
+    });
+    expect(tui).toContain("account codex-luna");
+    expect(tui).not.toContain("selected account");
     const lean = quotaJsonReport(
       {
         schemaVersion: 6,
@@ -181,6 +191,9 @@ describe("Codex native home discovery", () => {
     expect(
       lean.providers.every((row) => row.accountLocator === undefined),
     ).toBe(true);
+    expect(lean.providers[2]?.account?.credentialHome).toBe(
+      "~/.codex-luna/auth.json",
+    );
     const full = quotaJsonReport(
       {
         schemaVersion: 6,

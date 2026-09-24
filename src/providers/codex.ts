@@ -176,6 +176,25 @@ function nativeLocator(
   return { kind: "codex-home", path: home, delegateEligible };
 }
 
+function withNativeHome(
+  report: ProviderQuota,
+  home: string,
+  delegateEligible: boolean,
+): ProviderQuota {
+  return {
+    ...report,
+    accountLocator: nativeLocator(home, delegateEligible),
+    ...(report.account
+      ? {
+          account: {
+            ...report.account,
+            credentialHome: join(home, "auth.json"),
+          },
+        }
+      : {}),
+  };
+}
+
 async function withCodexLocator(
   report: ProviderQuota,
   home: string,
@@ -191,7 +210,7 @@ async function withCodexLocator(
         }
       : report;
   }
-  return { ...report, accountLocator: nativeLocator(home, true) };
+  return withNativeHome(report, home, true);
 }
 
 /** Extra homes are a JSON array of absolute paths; a bad entry cannot select a credential. */
@@ -307,15 +326,19 @@ async function fetchOtherCodexHome(
       credentials: state.credentials,
     });
     if (result.kind === "quota") {
-      return {
-        ...codexSuccessReport(
-          result.result,
-          "oauth",
-          [{ source: "oauth", status: "success" }],
-          accountId,
-        ),
-        accountKeys: [key],
-      };
+      return withNativeHome(
+        {
+          ...codexSuccessReport(
+            result.result,
+            "oauth",
+            [{ source: "oauth", status: "success" }],
+            accountId,
+          ),
+          accountKeys: [key],
+        },
+        home,
+        false,
+      );
     }
     const error =
       result.kind === "rejected"
@@ -340,30 +363,34 @@ async function fetchOtherCodexHome(
       report.state.authStatus = "expired_refreshable";
       if (!report.state.stale) report.state.status = "unavailable";
     }
-    return report;
+    return withNativeHome(report, home, false);
   }
   const error =
     state.status === "missing"
       ? "Codex profile credentials missing"
       : profileOnlyCredentialError(state.source.error ?? "credentials_invalid");
-  return {
-    ...codexFailureReport(
-      error,
-      undefined,
-      [
-        {
-          source: "oauth",
-          status: "skipped",
-          error: state.source.error ?? `credentials_${state.status}`,
-          ...(state.status === "invalid" ? { credentialPresent: true } : {}),
-        },
-      ],
-      "oauth",
-      key,
-      [],
-      key,
-    ),
-  };
+  return withNativeHome(
+    {
+      ...codexFailureReport(
+        error,
+        undefined,
+        [
+          {
+            source: "oauth",
+            status: "skipped",
+            error: state.source.error ?? `credentials_${state.status}`,
+            ...(state.status === "invalid" ? { credentialPresent: true } : {}),
+          },
+        ],
+        "oauth",
+        key,
+        [],
+        key,
+      ),
+    },
+    home,
+    false,
+  );
 }
 
 /**
@@ -1058,11 +1085,8 @@ function codexSuccessReport(
     ...quota.account,
     label: quota.account?.accountId
       ? `#${createHash("sha256").update(quota.account.accountId).digest("hex").slice(0, 8)}`
-      : codexCredentialKey(source) ?? "unknown",
+      : (codexCredentialKey(source) ?? "unknown"),
     credentialSource: source,
-    ...(source === "oauth" || source === "cli-rpc"
-      ? { credentialHome: codexHomeLabel() }
-      : {}),
   };
   const report = successProvider({
     provider: "codex",
@@ -1080,12 +1104,6 @@ function codexSuccessReport(
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;
-}
-
-/** A display-only path derived from CODEX_HOME; never reads a credential file. */
-function codexHomeLabel(): string {
-  const home = process.env.CODEX_HOME?.trim();
-  return home ? join(home, "auth.json") : "~/.codex/auth.json";
 }
 
 /**
