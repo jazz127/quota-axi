@@ -206,13 +206,15 @@ describe("fresh reuse is opt-in", () => {
     expect(usageCalls).toBe(0);
   });
 
-  it("validates QUOTA_AXI_MAX_AGE for full reports", async () => {
-    process.env.QUOTA_AXI_MAX_AGE = "soon";
-    await expect(readJson("--full")).rejects.toMatchObject({
-      code: "VALIDATION_ERROR",
-      message: expect.stringContaining("QUOTA_AXI_MAX_AGE"),
-    });
-    expect(usageCalls).toBe(0);
+  it("ignores an invalid QUOTA_AXI_MAX_AGE for full reports", async () => {
+    for (const value of ["soon", "61m"]) {
+      process.env.QUOTA_AXI_MAX_AGE = value;
+      const full = await readJson("--full");
+      expect(full.state.reused).toBeUndefined();
+      expect(full.account?.accountId).toBe("fixture");
+      expect(full.attempts?.length).toBeGreaterThan(0);
+    }
+    expect(usageCalls).toBe(2);
   });
 
   it("treats a blank QUOTA_AXI_MAX_AGE as unset", async () => {

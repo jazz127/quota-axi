@@ -358,7 +358,7 @@ A burst of back-to-back reads (a dispatcher that takes a fresh reading per decis
 Fresh reuse lets such a caller serve the last successful reading instead of asking the vendor again.
 It is opt-in: with neither `--max-age` nor `QUOTA_AXI_MAX_AGE`, every `quota` and `models` read asks the vendor.
 `--max-age <duration>` enables it for one call, and `QUOTA_AXI_MAX_AGE=<duration>` enables it for a host; the flag wins, so `--max-age 0` always asks the vendor.
-Both accept `0`, bare seconds, or a whole-unit duration up to one hour, and a `QUOTA_AXI_MAX_AGE` that does not parse fails the read with a validation error instead of being ignored.
+Both accept `0`, bare seconds, or a whole-unit duration up to one hour, and a `QUOTA_AXI_MAX_AGE` that does not parse fails a non-full read with a validation error instead of being ignored.
 Ninety seconds absorbs a burst and moves a five-hour window's elapsed time by half a percent.
 
 A reading is reused only when all of these hold:
