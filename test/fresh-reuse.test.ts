@@ -321,6 +321,41 @@ describe("fresh reuse", () => {
     ).toBe(true);
   });
 
+  it("keeps full account and source attempts on explicit fresh reuse", async () => {
+    const fresh = await readJson("--full", "--max-age", "0");
+    advance(5);
+    const reused = await readJson("--full", "--max-age", "90s");
+
+    expect(usageCalls).toBe(1);
+    expect(reused.state.reused).toBe(true);
+    expect(fresh.account).toEqual({
+      accountId: "fixture",
+      identityStatus: "verified",
+    });
+    expect(fresh.attempts).toEqual([
+      { source: "oauth-file", status: "success" },
+      { source: "oauth-profile", status: "success" },
+    ]);
+    expect(reused.account).toEqual(fresh.account);
+    expect(reused.attempts).toEqual(fresh.attempts);
+  });
+
+  it("reads again when an older reuse stamp cannot carry full evidence", async () => {
+    await readJson();
+    const cache = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
+      providers: { reuse: Record<string, unknown> }[];
+    };
+    delete cache.providers[0]!.reuse.evidenceComplete;
+    writeFileSync(cacheFilePath(), JSON.stringify(cache));
+
+    advance(5);
+    const full = await readJson("--full", "--max-age", "90s");
+    expect(usageCalls).toBe(2);
+    expect(full.state.reused).toBeUndefined();
+    expect(full.account?.accountId).toBe("fixture");
+    expect(full.attempts?.length).toBeGreaterThan(0);
+  });
+
   it("names a reused reading in TOON attention and keeps its quota rows", async () => {
     await readToon();
     advance(30);
@@ -418,7 +453,7 @@ describe("fresh reuse", () => {
     expect(usageCalls).toBeGreaterThan(1);
   });
 
-  it("reads the vendor for --full, whose account and attempts are never cached", async () => {
+  it("reads the vendor for --full unless reuse is explicitly requested", async () => {
     await readJson();
     const full = await readJson("--full");
     expect(usageCalls).toBe(2);

@@ -24,6 +24,7 @@ import type {
   ProviderSource,
   ProviderStatus,
   QuotaWindow,
+  SourceAttempt,
 } from "./types.js";
 import { PROVIDER_IDS } from "./types.js";
 
@@ -164,7 +165,11 @@ type ReuseStamp = {
   lanes: number;
   /** This lane's position in the adapter's declaration order. */
   lane: number;
+  /** Older stamps cannot prove a full report's evidence survived reuse. */
+  evidenceComplete: true;
   accountKeys?: string[];
+  account?: ProviderQuota["account"];
+  attempts?: SourceAttempt[];
   authStatus?: ProviderAuthStatus;
   degradedSources?: DegradedSource[];
 };
@@ -301,6 +306,10 @@ function reusedReading(record: CachedProvider): ProviderQuota {
   return {
     ...snapshot,
     ...(reuse?.accountKeys ? { accountKeys: [...reuse.accountKeys] } : {}),
+    ...(reuse?.account ? { account: { ...reuse.account } } : {}),
+    ...(reuse?.attempts
+      ? { attempts: reuse.attempts.map((attempt) => ({ ...attempt })) }
+      : {}),
     windows: snapshot.windows.map((window) => ({ ...window })),
     state: {
       ...snapshot.state,
@@ -540,7 +549,10 @@ function reuseStampsFor(
         readingAt,
         lanes: lanes.length,
         lane,
+        evidenceComplete: true,
         ...(provider.accountKeys ? { accountKeys: provider.accountKeys } : {}),
+        ...(provider.account ? { account: provider.account } : {}),
+        ...(provider.attempts ? { attempts: provider.attempts } : {}),
         ...(provider.state.authStatus
           ? { authStatus: provider.state.authStatus }
           : {}),
@@ -703,6 +715,7 @@ function normalizeReuseStamp(raw: unknown): ReuseStamp | undefined {
     !digest ||
     !CREDENTIAL_CONTEXT_ID.test(digest) ||
     !readingAt ||
+    data.evidenceComplete !== true ||
     lanes === undefined ||
     !Number.isInteger(lanes) ||
     lanes < 1 ||
@@ -719,17 +732,68 @@ function normalizeReuseStamp(raw: unknown): ReuseStamp | undefined {
     readingAt,
     lanes,
     lane,
+    evidenceComplete: true,
   };
   const accountKeys = stringArrayValue(data.accountKeys);
+  const account = normalizeReuseAccount(data.account);
+  const attempts = Array.isArray(data.attempts)
+    ? data.attempts.map(normalizeReuseAttempt)
+    : undefined;
+  if (
+    (data.account !== undefined && !account) ||
+    (data.attempts !== undefined && (!attempts || !attempts.every(Boolean)))
+  )
+    return undefined;
   const authStatus = literalValue(data.authStatus, AUTH_STATUSES);
   const degradedSources = Array.isArray(data.degradedSources)
     ? data.degradedSources.map(normalizeDegradedSource)
     : undefined;
   if (accountKeys && accountKeys.length > 0) stamp.accountKeys = accountKeys;
+  if (account) stamp.account = account;
+  if (attempts) stamp.attempts = attempts as SourceAttempt[];
   if (authStatus) stamp.authStatus = authStatus;
   if (degradedSources?.length && degradedSources.every(Boolean))
     stamp.degradedSources = degradedSources as DegradedSource[];
   return stamp;
+}
+
+function normalizeReuseAccount(raw: unknown): ProviderQuota["account"] {
+  const data = objectValue(raw);
+  if (!data) return undefined;
+  const email = stringValue(data.email);
+  const organization = stringValue(data.organization);
+  const accountId = stringValue(data.accountId);
+  const identityStatus = literalValue(data.identityStatus, [
+    "verified",
+    "unverified",
+  ] as const);
+  return {
+    ...(email ? { email } : {}),
+    ...(organization ? { organization } : {}),
+    ...(accountId ? { accountId } : {}),
+    ...(identityStatus ? { identityStatus } : {}),
+  };
+}
+
+function normalizeReuseAttempt(raw: unknown): SourceAttempt | undefined {
+  const data = objectValue(raw);
+  const source = stringValue(data?.source);
+  const status = literalValue(data?.status, [
+    "success",
+    "failed",
+    "skipped",
+  ] as const);
+  if (!source || !status) return undefined;
+  const error = stringValue(data?.error);
+  const credentialPresent = booleanValue(data?.credentialPresent);
+  const degraded = booleanValue(data?.degraded);
+  return {
+    source,
+    status,
+    ...(error ? { error } : {}),
+    ...(credentialPresent !== undefined ? { credentialPresent } : {}),
+    ...(degraded !== undefined ? { degraded } : {}),
+  };
 }
 
 function normalizeDegradedSource(raw: unknown): DegradedSource | undefined {
