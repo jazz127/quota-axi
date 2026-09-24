@@ -129,6 +129,24 @@ describe("renderQuotaTui structure", () => {
     expect(lines.join("\n")).not.toContain("38;2;250;179;135");
   });
 
+  it("uses the stale status when the legacy stale flag is absent", () => {
+    const response = fixtureResponse();
+    const stale = response.providers[0];
+    stale.state = {
+      ...stale.state,
+      status: "stale",
+      stale: undefined,
+      refreshedAt: "2026-08-06T22:00:00.000Z",
+      error: "network unavailable",
+    };
+    response.providers = [withUsageFetchFailure(stale)];
+    const output = renderQuotaTui(response, { timeZone: "UTC" });
+    expect(output).toContain("◌ claude");
+    expect(output).toContain("stale");
+    expect(output).toContain("last refreshed 2026-08-06T22:00:00.000Z");
+    expect(output).toContain("fetch failed network unavailable");
+  });
+
   it("shows passed window resets as ended instead of now", () => {
     const response = fixtureResponse();
     response.providers = [response.providers[0]!];

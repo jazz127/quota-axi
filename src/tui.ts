@@ -174,7 +174,7 @@ export function renderQuotaTui(
   };
   response.providers.forEach((provider, index) => {
     const presence = options.presence?.[index] ?? providerPresence(provider);
-    tiers[provider.state.status === "stale" ? "stale" : presence].push(
+    tiers[isStale(provider) ? "stale" : presence].push(
       provider,
     );
   });
@@ -182,7 +182,7 @@ export function renderQuotaTui(
   const carded = response.providers
     .filter((provider, index) => {
       const presence = options.presence?.[index] ?? providerPresence(provider);
-      return provider.state.status === "stale" || presence === "live";
+      return isStale(provider) || presence === "live";
     })
     .concat(attention);
   const card = (provider: ProviderQuota): Card =>
@@ -306,6 +306,10 @@ function isLive(provider: ProviderQuota): boolean {
   return provider.state.status === "fresh";
 }
 
+function isStale(provider: ProviderQuota): boolean {
+  return provider.state.status === "stale";
+}
+
 /**
  * The fleet summary, never wider than the report. Every tier count is
  * required reading, so a header that does not fit gives up the timestamp -
@@ -342,7 +346,7 @@ function buildCard(
 ): Card {
   return isLive(provider)
     ? buildLiveCard(provider, generatedAtMs, show)
-    : provider.state.status === "stale"
+    : isStale(provider)
       ? muteStaleCard(buildLiveCard(provider, generatedAtMs, show))
       : buildFailedCard(provider);
 }
@@ -376,7 +380,7 @@ function buildLiveCard(
   generatedAtMs: number,
   show: TuiShow,
 ): Card {
-  const stale = provider.state.stale;
+  const stale = isStale(provider);
   const rightTitle = [
     provider.plan,
     provider.source,
@@ -559,7 +563,7 @@ function creditsOnlyHeadline(
 
 function creditsHeadline(provider: ProviderQuota): Line[] | undefined {
   if (provider.windows.length === 0) return undefined;
-  if (provider.state.stale || provider.state.status !== "fresh")
+  if (isStale(provider) || provider.state.status !== "fresh")
     return undefined;
   if (!hasDisplayableCredits(provider)) return undefined;
   if (creditWindowMatchesBalance(provider)) return undefined;
@@ -898,7 +902,7 @@ function runwayVerdict(headline: EffectiveAvailability | undefined): Line {
 
 function cardNotes(provider: ProviderQuota): string[] {
   const notes: string[] = [];
-  if (provider.state.stale) {
+  if (isStale(provider)) {
     const error = provider.state.error
       ? `${isUsageFetchFailure(provider) ? "fetch failed " : ""}${provider.state.error}`
       : undefined;
