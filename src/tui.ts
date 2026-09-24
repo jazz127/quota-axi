@@ -174,11 +174,9 @@ export function renderQuotaTui(
   };
   response.providers.forEach((provider, index) => {
     const presence = options.presence?.[index] ?? providerPresence(provider);
-    tiers[isStale(provider) ? "stale" : presence].push(
-      provider,
-    );
+    tiers[isStale(provider) ? "stale" : presence].push(provider);
   });
-  const { live, stale, attention, absent } = tiers;
+  const { attention, absent } = tiers;
   const carded = response.providers
     .filter((provider, index) => {
       const presence = options.presence?.[index] ?? providerPresence(provider);
@@ -563,8 +561,7 @@ function creditsOnlyHeadline(
 
 function creditsHeadline(provider: ProviderQuota): Line[] | undefined {
   if (provider.windows.length === 0) return undefined;
-  if (isStale(provider) || provider.state.status !== "fresh")
-    return undefined;
+  if (isStale(provider) || provider.state.status !== "fresh") return undefined;
   if (!hasDisplayableCredits(provider)) return undefined;
   if (creditWindowMatchesBalance(provider)) return undefined;
   const credits = provider.credits;
