@@ -3,9 +3,7 @@ import { chmodSync, existsSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   cacheFilePath,
-  claudeCredentialContextId,
   ensurePrivateParent,
-  readJsonFile,
   readUntracedJsonFile,
 } from "./lib/fs.js";
 import { kimiReadingContextId } from "./providers/kimi-cache-context.js";
@@ -466,7 +464,11 @@ export function writeCachedProviders(
         provider.source === "cli"
       ),
   );
-  if (providers.length === 0) return;
+  if (
+    providers.length === 0 ||
+    !providers.some((provider) => provider.state.status === "fresh")
+  )
+    return;
   const reuseStamps = reuseStampsFor(providers, readingAt);
 
   withCacheWriteLock(() => {
@@ -486,8 +488,8 @@ export function writeCachedProviders(
       const existing = existingByProvider.get(cacheIdentity(provider));
       return Boolean(
         existing?.snapshot.credits !== undefined &&
-          existing.credentialContextId !== undefined &&
-          existing.credentialContextId === openRouterReadingContextId(),
+        existing.credentialContextId !== undefined &&
+        existing.credentialContextId === openRouterReadingContextId(),
       );
     };
     const clearProviders = new Set(
