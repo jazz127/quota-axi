@@ -323,7 +323,10 @@ describe("Codex Pi sibling account lanes", () => {
       "openai-codex",
       "openai-codex-work",
     ]);
-    expect(compact.providers[0]?.account).toBeUndefined();
+    expect(compact.providers[0]?.account).toMatchObject({
+      label: expect.stringMatching(/^#[a-f0-9]{8}$/),
+      credentialSource: "pi:openai-codex",
+    });
     expect(JSON.stringify(compact)).not.toMatch(
       /personal-access-token|work-access-token/,
     );

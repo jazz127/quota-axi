@@ -2,6 +2,7 @@ import {
   providerPresence,
   type ProviderPresence,
 } from "./lib/source-attempts.js";
+import { collapseHome } from "./lib/fs.js";
 import type {
   EffectiveAvailability,
   ProviderId,
@@ -9,6 +10,7 @@ import type {
   QuotaAxiResponse,
   QuotaWindow,
 } from "./types.js";
+import { creditWindowMatchesBalance } from "./render.js";
 
 /**
  * Human terminal report ("Direction D'"): a two-up card grid with thin
@@ -360,14 +362,16 @@ function buildLiveCard(
   ];
 
   const headline = pickHeadlineAvailability(provider);
-  const creditsLine = creditsOnlyHeadline(provider, stale);
-  if (creditsLine) {
-    lines.push(...creditsLine);
+  const creditsOnlyLine = creditsOnlyHeadline(provider, stale);
+  if (creditsOnlyLine) {
+    lines.push(...creditsOnlyLine);
   } else if (hasWhollyUnknownWindowRelationships(provider)) {
     lines.push(...windowsOnlyHeadline(stale));
   } else {
     lines.push(...effectiveHeadline(provider, headline, stale, show));
   }
+  const creditsLine = creditsHeadline(provider);
+  if (creditsLine) lines.push(...creditsLine);
 
   if (provider.windows.length > 0) {
     lines.push(interior([], "border"));
@@ -498,6 +502,43 @@ function creditsOnlyHeadline(
       "border",
     ),
   ];
+}
+
+function creditsHeadline(provider: ProviderQuota): Line[] | undefined {
+  if (provider.windows.length === 0) return undefined;
+  if (provider.state.stale || provider.state.status !== "fresh")
+    return undefined;
+  if (!hasDisplayableCredits(provider)) return undefined;
+  if (creditWindowMatchesBalance(provider)) return undefined;
+  const credits = provider.credits;
+  if (!credits) return undefined;
+  const amount =
+    credits.unlimited === true
+      ? "unlimited"
+      : credits.remaining === undefined
+        ? undefined
+        : `${credits.remaining} ${credits.unit ?? "credits"} remaining`;
+  if (amount === undefined) return undefined;
+  return [
+    interior(
+      [
+        { text: "   " },
+        {
+          text: `balance · ${amount}`,
+          style: "dim",
+        },
+      ],
+      "border",
+    ),
+  ];
+}
+
+function hasDisplayableCredits(provider: ProviderQuota): boolean {
+  return (
+    provider.credits?.unlimited === true ||
+    (provider.credits?.remaining !== undefined &&
+      provider.credits.remaining > 0)
+  );
 }
 
 /**
@@ -1146,6 +1187,29 @@ function accountCardLines(
   provider: ProviderQuota,
   border: "border" | "borderDim",
 ): Line[] {
+  if (provider.provider === "codex") {
+    const label = provider.account?.label;
+    const identity = provider.accountKey
+      ? `${provider.accountKey}${label && label !== provider.accountKey ? ` (${label})` : ""}`
+      : label ?? "unknown";
+    const origin = provider.account?.credentialHome
+      ? `home ${collapseHome(provider.account.credentialHome)}`
+      : `source ${provider.account?.credentialSource ?? provider.source ?? "unknown"}`;
+    return [
+      interior(
+        [
+          {
+            text: truncate(
+              `   account ${identity} · ${origin} · selected account`,
+              CARD_INTERIOR,
+            ),
+            style: "dim",
+          },
+        ],
+        border,
+      ),
+    ];
+  }
   const accountKey = configuredAccountKey(provider);
   if (!accountKey) return [];
   return [

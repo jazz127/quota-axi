@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { encode } from "@toon-format/toon";
 import { quotaHelpLines } from "./advice.js";
 import { accountColumns } from "./providers/accounts.js";
@@ -123,6 +124,9 @@ export function renderQuotaToon(
  */
 function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
   const blocks: ProviderBlocks = { quota: [], exhaustion: [], attention: [] };
+  const codexAccountCount = response.providers.filter(
+    (provider) => provider.provider === "codex",
+  ).length;
   for (const provider of response.providers) {
     const scopes = provider.quotaSemantics?.effectiveAvailability ?? [];
     const scopeAttention: AttentionRow[] = [];
@@ -160,10 +164,34 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
     blocks.attention.push(
       ...providerAttention(provider, measured, scopeAttention.length),
     );
+    if (provider.provider === "codex") {
+      const identity = codexAccountLabel(provider);
+      const location = provider.account?.credentialHome
+        ? `home ${collapseHome(provider.account.credentialHome)}`
+        : `source ${provider.account?.credentialSource ?? provider.source ?? "unknown"}`;
+      blocks.attention.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "account_source",
+        detail: `${identity} · ${location} · ${codexAccountCount === 1 ? "single Codex account shown" : `Codex account ${provider.accountKey ?? "default"} of ${codexAccountCount} shown`}`,
+        remedy: NONE,
+      });
+    }
     blocks.attention.push(...shareRows(provider));
     blocks.attention.push(...scopeAttention);
   }
   return blocks;
+}
+
+function codexAccountLabel(provider: ProviderQuota): string {
+  const label =
+    provider.account?.label ??
+    (provider.account?.accountId
+      ? `#${createHash("sha256").update(provider.account.accountId).digest("hex").slice(0, 8)}`
+      : undefined) ??
+    provider.accountKey ??
+    provider.accountKeys?.[0];
+  return label ? `account ${label}` : "account identity unavailable";
 }
 
 function quotaRow(
@@ -285,7 +313,31 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  if (measured) return rows;
+  if (measured) {
+    const credits =
+      provider.provider === "openrouter"
+        ? creditBalance(provider)
+        : freshCreditBalance(provider);
+    if (credits) {
+      rows.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "credits",
+        detail: `${credits}`,
+        remedy: primary ? NONE : (provider.state.remedyCommand ?? NONE),
+      });
+    }
+    if (provider.provider === "openrouter" && provider.state.error) {
+      rows.push({
+        ...providerColumns(provider),
+        scope: "all",
+        kind: "credits",
+        detail: provider.state.error,
+        remedy: NONE,
+      });
+    }
+    return rows;
+  }
 
   const authStatus = provider.state.authStatus;
   const suffix = authStatus ? ` (auth ${authStatus})` : "";
@@ -294,6 +346,15 @@ function providerStateRows(
     return rows;
   }
   const credits = creditBalance(provider);
+  if (provider.provider === "openrouter" && provider.state.error && !credits) {
+    rows.push({
+      ...providerColumns(provider),
+      scope: "all",
+      kind: "credits",
+      detail: provider.state.error,
+      remedy: NONE,
+    });
+  }
   if (credits) {
     rows.unshift({
       ...providerColumns(provider),
@@ -318,10 +379,11 @@ function providerStateRows(
 }
 
 /**
- * A provider that reports a raw credit balance but no measurable scope has a
- * real number to state. Naming it keeps the default report from contradicting
- * the same run's `credits` with a bare `no_quota`, without inventing a
- * percentage or a routing bound from a balance that has no cap.
+ * A provider that reports a raw credit balance has a real number to state,
+ * whether or not it also reports measurable scopes.
+ * Naming it keeps the default report from hiding that evidence beside either
+ * measurable or absent scopes, without inventing a percentage or a routing
+ * bound from a balance that has no cap.
  */
 function creditBalance(provider: ProviderQuota): string | undefined {
   const credits = provider.credits;
@@ -329,6 +391,34 @@ function creditBalance(provider: ProviderQuota): string | undefined {
   if (credits.unlimited) return "credits unlimited";
   if (credits.remaining === undefined) return undefined;
   return `remaining ${credits.remaining} ${credits.unit ?? "credits"}`;
+}
+
+function freshCreditBalance(provider: ProviderQuota): string | undefined {
+  if (provider.state.stale || provider.state.status !== "fresh")
+    return undefined;
+  if (
+    provider.credits?.unlimited !== true &&
+    !(
+      provider.credits?.remaining !== undefined &&
+      provider.credits.remaining > 0
+    )
+  ) {
+    return undefined;
+  }
+  return creditBalance(provider);
+}
+
+export function creditWindowMatchesBalance(provider: ProviderQuota): boolean {
+  const remaining = provider.credits?.remaining;
+  if (remaining === undefined) return false;
+  return provider.windows.some(
+    (window) =>
+      window.kind === "credits" &&
+      window.spentUsd !== undefined &&
+      window.limitUsd !== undefined &&
+      Math.abs(window.limitUsd - window.spentUsd - remaining) <=
+        1e-9 * Math.max(1, Math.abs(window.limitUsd)),
+  );
 }
 
 function primaryProviderRow(provider: ProviderQuota): AttentionRow | undefined {
@@ -600,8 +690,23 @@ export function redactedResponse(
     ...response,
     providers: response.providers.map((provider) => ({
       ...provider,
-      account: undefined,
       accountLocator: undefined,
+      account:
+        provider.provider === "codex" && provider.account
+          ? {
+              label: provider.account?.label,
+              ...(provider.account?.accountId
+                ? {
+                    label: `#${createHash("sha256").update(provider.account.accountId).digest("hex").slice(0, 8)}`,
+                  }
+                : {}),
+              credentialHome: provider.account?.credentialHome
+                ? collapseHome(provider.account.credentialHome)
+                : undefined,
+              credentialSource:
+                provider.account?.credentialSource ?? provider.source,
+            }
+          : undefined,
       attempts: undefined,
     })),
   };

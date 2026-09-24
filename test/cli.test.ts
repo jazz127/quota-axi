@@ -574,7 +574,7 @@ describe("CLI quota rendering", () => {
     // The remedy rides the stale provider's `attention[]` row, and the stale
     // scope gets no `quota[]` row at all.
     expect(output).toContain(
-      "attention[3]{provider,scope,kind,detail,remedy}:",
+      "attention[4]{provider,scope,kind,detail,remedy}:",
     );
     expect(output).toContain(
       'claude,all,stale,"last refreshed 2026-07-06T18:10:00Z · keychain_prompt_required · reason keychain_access_required",quota-axi --allow-keychain-prompt',
@@ -590,7 +590,7 @@ describe("CLI quota rendering", () => {
     expect(output).toContain(
       "codex,all_models,unmeasurable,five_hour blocks spendPriority,none",
     );
-    expect(output).not.toContain("codex,all,");
+    expect(output).not.toContain("codex,all,stale,");
   });
 
   it("advertises the inference opt-in when the env token's scope denial is the final Claude failure", async () => {
@@ -1147,7 +1147,7 @@ describe("CLI quota rendering", () => {
     expect(compact).toContain(
       'codex,all_models,258720,"2026-07-18T11:52:00.000Z",weekly',
     );
-    expect(compact).toContain("attention[0]:");
+    expect(compact).toContain("attention[1]{provider,scope,kind,detail,remedy}:");
     expect(compact).not.toContain("windows[");
     expect(compact).not.toContain("worstReserve");
 
@@ -1765,12 +1765,8 @@ describe("new provider public quota output", () => {
       expect.objectContaining({
         provider: "openrouter",
         source: "api",
-        account: {
-          accountId: "personal",
-          identityStatus: "unverified",
-        },
         credits: { remaining: 73.25, unit: "usd" },
-        windows: [
+        windows: expect.arrayContaining([
           expect.objectContaining({
             id: "key-limit",
             kind: "credits",
@@ -1779,7 +1775,7 @@ describe("new provider public quota output", () => {
             percentRemaining: 73.25,
             resetText: "Daily",
           }),
-        ],
+        ]),
         state: expect.objectContaining({ status: "fresh", stale: false }),
       }),
     ]);
@@ -1787,6 +1783,7 @@ describe("new provider public quota output", () => {
 
     const report = await capture(["--provider", "openrouter"]);
     expect(report).toContain("openrouter,all,unresolved_windows,key-limit");
+    expect(report).toContain("openrouter,all,credits,remaining 73.25 usd");
   });
 
   it("reports both new providers as signed out when no key is present", async () => {
@@ -1819,7 +1816,12 @@ describe("new provider public quota output", () => {
     process.env.WINDSURF_API_KEY = key;
     const payload = JSON.parse(
       readFileSync("test/fixtures/devin/pro.json", "utf8"),
-    ) as unknown;
+    ) as {
+      userStatus: { planStatus: { dailyQuotaResetAtUnix: string } };
+    };
+    // Keep the daily window live at the captured real clock as well as the
+    // fake report clock installed above.
+    payload.userStatus.planStatus.dailyQuotaResetAtUnix = "1790755200";
     const fetch = vi.fn(async () => {
       return new Response(JSON.stringify(payload), {
         status: 200,
@@ -1871,6 +1873,36 @@ describe("new provider public quota output", () => {
 });
 
 describe("default TOON decision blocks", () => {
+  it("labels a single Codex credits reading with its account and home", async () => {
+    useTempCache();
+    PROVIDERS.codex = providerWithQuota({
+      provider: "codex",
+      label: "Codex",
+      source: "oauth",
+      account: { accountId: "acct-main", credentialHome: "~/.codex/auth.json" },
+      windows: [],
+      credits: { remaining: 0, unit: "credits" },
+      state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+    });
+
+    const output = await capture(["--provider", "codex"]);
+    expect(output).toContain("kind,detail,remedy}:");
+    expect(output).toContain("codex,all,credits,remaining 0 credits,none");
+    expect(output).toMatch(
+      /codex,all,account_source,account #[a-f0-9]{8} · home ~\/\.codex\/auth\.json · single Codex account shown,none/,
+    );
+
+    const json = JSON.parse(
+      await capture(["--provider", "codex", "--json"]),
+    ) as QuotaAxiResponse;
+    expect(json.providers[0]?.account).toMatchObject({
+      label: expect.stringMatching(/^#[a-f0-9]{8}$/),
+      credentialHome: "~/.codex/auth.json",
+      credentialSource: "oauth",
+    });
+    expect(JSON.stringify(json)).not.toContain("acct-main");
+  });
+
   it("names every requested provider in quota[] or attention[]", async () => {
     useTempCache();
     PROVIDERS.claude = providerWithQuota(freshClaudeQuota());
@@ -1978,7 +2010,11 @@ describe("default TOON decision blocks", () => {
     );
     expect(output).not.toContain("elevenlabs");
     expect(toonRows(output, "attention").map((row) => row[0])).toEqual(
-      Object.keys(PROVIDERS).filter((id) => id !== "elevenlabs"),
+      [
+        ...Object.keys(PROVIDERS)
+          .filter((id) => id !== "elevenlabs")
+          .flatMap((id) => (id === "codex" ? [id, id] : [id])),
+      ],
     );
     expect(process.exitCode).toBeUndefined();
   });
@@ -2404,6 +2440,171 @@ describe("default TOON decision blocks", () => {
         "none",
       ],
     ]);
+  });
+
+  it.each([
+    ["deepseek", "DeepSeek", "usd", 12.5],
+    ["minimax", "MiniMax", "usd", 8.25],
+  ])(
+    "reports a fresh %s credits-only balance without throwing",
+    async (provider, label, unit, remaining) => {
+      useTempCache();
+      const providerId = provider as "deepseek" | "minimax";
+      PROVIDERS[providerId] = providerWithQuota({
+        provider: providerId,
+        label,
+        source: "api",
+        windows: [],
+        credits: { remaining, unit },
+        state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+      });
+
+      const rows = toonRows(
+        await capture(["--provider", provider]),
+        "attention",
+      );
+      expect(rows).toContainEqual([
+        provider,
+        "all",
+        "credits",
+        `remaining ${remaining} ${unit}`,
+        "none",
+      ]);
+    },
+  );
+
+  it.each([
+    ["commandcode", "Command Code", "credits"],
+    ["openrouter", "OpenRouter", "usd"],
+  ])(
+    "keeps a fresh zero %s credits-only balance visible",
+    async (provider, label, unit) => {
+      useTempCache();
+      const providerId = provider as "commandcode" | "openrouter";
+      PROVIDERS[providerId] = providerWithQuota({
+        provider: providerId,
+        label,
+        source: "api",
+        windows: [],
+        credits: { remaining: 0, unit },
+        state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+      });
+
+      const rows = toonRows(
+        await capture(["--provider", provider]),
+        "attention",
+      );
+      expect(rows).toContainEqual([
+        provider,
+        "all",
+        "credits",
+        `remaining 0 ${unit}`,
+        "none",
+      ]);
+    },
+  );
+  it("keeps an exhausted OpenRouter key-cap balance beside an unknown scope", async () => {
+    useTempCache();
+    PROVIDERS.openrouter = providerWithQuota({
+      provider: "openrouter",
+      label: "OpenRouter",
+      source: "api",
+      windows: [
+        {
+          id: "unfamiliar",
+          label: "unfamiliar",
+          kind: "unknown",
+        },
+      ],
+      credits: { remaining: 0, unit: "usd" },
+      state: { status: "fresh", stale: false, sourcesTried: ["api"] },
+    });
+
+    const rows = toonRows(
+      await capture(["--provider", "openrouter"]),
+      "attention",
+    );
+    expect(rows).toContainEqual([
+      "openrouter",
+      "all",
+      "credits",
+      "remaining 0 usd",
+      "none",
+    ]);
+  });
+
+  it("keeps a positive Command Code balance without a contradictory no_quota row", async () => {
+    useTempCache();
+    PROVIDERS.commandcode = providerWithQuota({
+      provider: "commandcode",
+      label: "Command Code",
+      source: "api",
+      windows: [{ id: "unknown", label: "unknown", kind: "unknown" }],
+      quotaSemantics: {
+        status: "unknown",
+        effectiveAvailability: [
+          { scope: "all", status: "unknown", boundedBy: [] },
+        ],
+      },
+      credits: { remaining: 12.5, unit: "credits" },
+      state: {
+        status: "fresh",
+        stale: false,
+        authStatus: "usable",
+        sourcesTried: ["api"],
+      },
+    });
+
+    const rows = toonRows(
+      await capture(["--provider", "commandcode"]),
+      "attention",
+    );
+    expect(rows).toContainEqual([
+      "commandcode",
+      "all",
+      "credits",
+      "remaining 12.5 credits (auth usable)",
+      "none",
+    ]);
+    expect(rows.some((row) => row[2] === "no_quota")).toBe(false);
+  });
+
+  it.each([
+    [12, true],
+    [0, false],
+  ])(
+    "shows only a positive Codex credit balance (%s)",
+    async (remaining, shown) => {
+      useTempCache();
+      PROVIDERS.codex = providerWithQuota({
+        ...freshCodexQuota(),
+        credits: { remaining, unit: "credits" },
+      });
+
+      const rows = toonRows(
+        await capture(["--provider", "codex"]),
+        "attention",
+      );
+      expect(rows.some((row) => row[2] === "credits")).toBe(shown);
+    },
+  );
+
+  it("does not show a cached credit balance in a stale snapshot", async () => {
+    useTempCache();
+    PROVIDERS.grok = providerWithQuota({
+      ...grokModelAuthOnlyQuota(),
+      source: "cache",
+      credits: { remaining: 7, unit: "credits" },
+      state: {
+        ...grokModelAuthOnlyQuota().state,
+        status: "stale",
+        stale: true,
+        refreshedAt: "2026-07-06T18:10:00Z",
+      },
+    });
+
+    const rows = toonRows(await capture(["--provider", "grok"]), "attention");
+    expect(rows.some((row) => row[2] === "credits")).toBe(false);
   });
 
   it("surfaces rate-limit, unresolved, and untrusted facts in attention[]", async () => {

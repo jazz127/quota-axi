@@ -1,6 +1,6 @@
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   deleteCachedProvider,
@@ -1054,12 +1054,22 @@ function codexSuccessReport(
   attempts: SourceAttempt[],
   storedAccountId?: string,
 ): ProviderQuota {
+  const account = {
+    ...quota.account,
+    label: quota.account?.accountId
+      ? `#${createHash("sha256").update(quota.account.accountId).digest("hex").slice(0, 8)}`
+      : codexCredentialKey(source) ?? "unknown",
+    credentialSource: source,
+    ...(source === "oauth" || source === "cli-rpc"
+      ? { credentialHome: codexHomeLabel() }
+      : {}),
+  };
   const report = successProvider({
     provider: "codex",
     label: "Codex",
     source,
     plan: quota.plan,
-    account: quota.account,
+    account,
     windows: quota.windows,
     credits: quota.credits,
     refreshedAt: quota.refreshedAt,
@@ -1070,6 +1080,12 @@ function codexSuccessReport(
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;
+}
+
+/** A display-only path derived from CODEX_HOME; never reads a credential file. */
+function codexHomeLabel(): string {
+  const home = process.env.CODEX_HOME?.trim();
+  return home ? join(home, "auth.json") : "~/.codex/auth.json";
 }
 
 /**
