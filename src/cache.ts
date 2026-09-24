@@ -411,6 +411,7 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
       label: provider.label,
       source: provider.source,
       plan: provider.plan,
+      resetsAvailable: provider.resetsAvailable,
       windows: provider.windows,
       credits: provider.credits,
       state: {
@@ -513,10 +514,18 @@ function normalizeCachedProvider(
     },
   };
   const plan = stringValue(data.plan);
+  const resetsAvailable = numberValue(data.resetsAvailable);
   const refreshedAt = stringValue(state.refreshedAt);
   const untrustedWindowIds = stringArrayValue(state.untrustedWindowIds);
   const credits = normalizeCachedCredits(data.credits);
   if (plan) snapshot.plan = plan;
+  if (
+    provider === "codex" &&
+    resetsAvailable !== undefined &&
+    Number.isSafeInteger(resetsAvailable) &&
+    resetsAvailable >= 0
+  )
+    snapshot.resetsAvailable = resetsAvailable;
   if (refreshedAt) snapshot.state.refreshedAt = refreshedAt;
   if (untrustedWindowIds)
     snapshot.state.untrustedWindowIds = untrustedWindowIds;

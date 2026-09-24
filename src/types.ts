@@ -313,6 +313,8 @@ export type ProviderQuota = {
   /** Report provenance. Omitted from default `--json`; see `--full`. */
   source?: ProviderSource;
   plan?: string;
+  /** Number of banked Codex rate-limit resets the source reports available. */
+  resetsAvailable?: number;
   account?: {
     /** Stable non-secret account label for ordinary Codex output. */
     label?: string;
