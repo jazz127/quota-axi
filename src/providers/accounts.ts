@@ -6,27 +6,45 @@ import type {
   ProviderQuota,
 } from "../types.js";
 
+/** A provider could not enumerate its configured account routes reliably. */
+export class AccountDiscoveryError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "AccountDiscoveryError";
+  }
+}
+
+type Discovery = { accounts?: ProviderAccount[]; failure?: string };
+
 /**
  * Discovery belongs to the adapter; collection never interprets credentials.
  *
  * A key is user-editable configuration, so a malformed or repeated one - which
  * would land in cache slots and output join columns - costs only its own lane:
  * the rest still expand, because one unusable entry must not hide the accounts
- * beside it. Only when no lane survives does the read fall back to the
- * adapter's single selected account, which never fails the whole report.
+ * beside it. Discovery exceptions are different: enumeration cannot be
+ * trusted, so the selected reader is used and the failure is published as
+ * `account-discovery` evidence.
  */
 async function accountsFor(
   adapter: ProviderAdapter,
   options: ProviderOptions,
-): Promise<ProviderAccount[] | undefined> {
-  if (options.credentialMode === "profile-only") return undefined;
+): Promise<Discovery> {
+  if (options.credentialMode === "profile-only") return {};
   let accounts: ProviderAccount[] | undefined;
   try {
     accounts = await adapter.discoverAccounts?.();
-  } catch {
-    return undefined;
+  } catch (error) {
+    return {
+      failure:
+        error instanceof Error && error.name === "AccountDiscoveryError"
+          ? "reason" in error && typeof error.reason === "string"
+            ? error.reason
+            : "account_discovery_failed"
+          : "account_discovery_failed",
+    };
   }
-  if (!accounts?.length) return undefined;
+  if (!accounts?.length) return {};
   const keys = new Set<string>();
   const usable = accounts.filter((account) => {
     if (
@@ -37,15 +55,34 @@ async function accountsFor(
     keys.add(account.accountKey);
     return true;
   });
-  return usable.length > 0 ? usable : undefined;
+  return usable.length > 0 ? { accounts: usable } : {};
 }
 
 export async function fetchAccountQuotas(
   adapter: ProviderAdapter,
   options: ProviderOptions,
 ): Promise<ProviderQuota[]> {
-  const accounts = await accountsFor(adapter, options);
-  if (!accounts) return [await adapter.fetchQuota(options)];
+  const { accounts, failure } = await accountsFor(adapter, options);
+  if (!accounts) {
+    const report = await adapter.fetchQuota(options);
+    if (failure) {
+      const attempt = {
+        source: "account-discovery",
+        status: "failed" as const,
+        error: failure,
+      };
+      report.attempts = [...(report.attempts ?? []), attempt];
+      report.state.sourcesTried = [
+        ...new Set([...(report.state.sourcesTried ?? []), attempt.source]),
+      ];
+      if (report.state.status === "fresh")
+        report.state.degradedSources = [
+          ...(report.state.degradedSources ?? []),
+          { source: attempt.source, error: failure },
+        ];
+    }
+    return [report];
+  }
   // Keep each adapter's declaration order, including failed accounts. Readers
   // return their own structured failure; no account selects a sibling's token.
   const readings: { account: ProviderAccount; report: ProviderQuota }[] = [];
@@ -76,6 +113,7 @@ export async function fetchAccountQuotas(
       account.accountKey,
       report.accountKeys,
     );
+    report.accountLocator ??= account.locator;
   }
   return readings.map(({ report }) => report);
 }
@@ -102,8 +140,17 @@ export async function inspectAccountAuth(
   adapter: ProviderAdapter,
   options: ProviderOptions,
 ): Promise<AuthProviderReport[]> {
-  const accounts = await accountsFor(adapter, options);
-  if (!accounts) return [await adapter.inspectAuth(options)];
+  const { accounts, failure } = await accountsFor(adapter, options);
+  if (!accounts) {
+    const report = await adapter.inspectAuth(options);
+    if (failure)
+      report.sources.push({
+        source: "account-discovery",
+        status: "error",
+        error: failure,
+      });
+    return [report];
+  }
   const reports: AuthProviderReport[] = [];
   for (const account of accounts) {
     let report: AuthProviderReport;

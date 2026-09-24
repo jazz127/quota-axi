@@ -2,8 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchAccountQuotas } from "../../src/providers/accounts.js";
-import { renderQuotaToon } from "../../src/render.js";
+import {
+  fetchAccountQuotas,
+  inspectAccountAuth,
+} from "../../src/providers/accounts.js";
+import { quotaJsonReport, renderQuotaToon } from "../../src/render.js";
 import type { ProviderOptions } from "../../src/types.js";
 
 const original = {
@@ -98,8 +101,11 @@ describe("Codex native home discovery", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.accountKey).toBeUndefined();
     expect(rows[0]).toMatchObject({
-      credentialHome: selected,
-      accountLabel: "#cct-main",
+      accountLocator: {
+        kind: "codex-home",
+        path: selected,
+        delegateEligible: true,
+      },
       windows: [{ percentUsed: 100 }],
     });
   });
@@ -119,15 +125,38 @@ describe("Codex native home discovery", () => {
     expect(
       rows.map((row) => [
         row.accountKey,
-        row.accountLabel,
-        row.credentialHome,
+        row.accountLocator,
         row.windows[0]?.percentUsed,
       ]),
     ).toEqual([
-      ["codex-home", "#cct-main", join(root, "selected"), 100],
-      ["codex-default", "#-default", join(root, ".codex"), 100],
-      ["codex-luna", "#cct-luna", luna, 13],
-      [expect.stringMatching(/^codex-[a-f0-9]{16}$/), "#ct-extra", extra, 50],
+      [
+        "codex-home",
+        {
+          kind: "codex-home",
+          path: join(root, "selected"),
+          delegateEligible: true,
+        },
+        100,
+      ],
+      [
+        "codex-default",
+        {
+          kind: "codex-home",
+          path: join(root, ".codex"),
+          delegateEligible: false,
+        },
+        100,
+      ],
+      [
+        "codex-luna",
+        { kind: "codex-home", path: luna, delegateEligible: false },
+        13,
+      ],
+      [
+        expect.stringMatching(/^codex-[a-f0-9]{16}$/),
+        { kind: "codex-home", path: extra, delegateEligible: false },
+        50,
+      ],
     ]);
     expect(process.env.CODEX_HOME).toBe(join(root, "selected"));
     const toon = renderQuotaToon(
@@ -139,8 +168,39 @@ describe("Codex native home discovery", () => {
       "quota-axi",
       false,
     );
-    expect(toon).toContain(luna);
-    expect(toon).toContain("#cct-luna");
+    expect(toon).toContain("codex-luna");
+    expect(toon).not.toContain(luna);
+    const lean = quotaJsonReport(
+      {
+        schemaVersion: 6,
+        generatedAt: new Date().toISOString(),
+        providers: rows,
+      },
+      false,
+    );
+    expect(
+      lean.providers.every((row) => row.accountLocator === undefined),
+    ).toBe(true);
+    const full = quotaJsonReport(
+      {
+        schemaVersion: 6,
+        generatedAt: new Date().toISOString(),
+        providers: rows,
+      },
+      true,
+    );
+    expect(full.providers[2]?.accountLocator?.path).toBe(luna);
+    expect(
+      renderQuotaToon(
+        {
+          schemaVersion: 6,
+          generatedAt: new Date().toISOString(),
+          providers: rows,
+        },
+        "quota-axi",
+        true,
+      ),
+    ).toContain(luna);
   });
 
   it("shows missing and unreadable configured homes without hiding a healthy seat", async () => {
@@ -156,7 +216,7 @@ describe("Codex native home discovery", () => {
     const rows = await fetchAccountQuotas(adapter, options);
     expect(rows).toHaveLength(3);
     expect(rows[0]?.state.status).toBe("fresh");
-    expect(rows.slice(1).map((row) => row.credentialHome)).toEqual([
+    expect(rows.slice(1).map((row) => row.accountLocator?.path)).toEqual([
       missing,
       unreadable,
     ]);
@@ -167,5 +227,84 @@ describe("Codex native home discovery", () => {
           (row) => row.state.status !== "fresh" && row.windows.length === 0,
         ),
     ).toBe(true);
+  });
+
+  it("reports malformed home configuration through shared discovery failure", async () => {
+    home("selected", "acct-main");
+    process.env.QUOTA_AXI_CODEX_HOMES = '["relative-home"]';
+    stubUsage();
+    const adapter = (
+      await import("../../src/providers/codex.js")
+    ).createCodexAdapter();
+    const rows = await fetchAccountQuotas(adapter, options);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      state: {
+        status: "fresh",
+        degradedSources: [
+          { source: "account-discovery", error: "invalid_home_configuration" },
+        ],
+      },
+    });
+    expect(rows[0]?.attempts).toContainEqual({
+      source: "account-discovery",
+      status: "failed",
+      error: "invalid_home_configuration",
+    });
+    const auth = await inspectAccountAuth(adapter, options);
+    expect(auth[0]?.sources).toContainEqual({
+      source: "account-discovery",
+      status: "error",
+      error: "invalid_home_configuration",
+    });
+  });
+
+  it("leaves a rejected expired sibling refreshable and unmeasured", async () => {
+    home("selected", "acct-main");
+    const sibling = home(".codex-luna", "acct-luna");
+    const expired = `header.${Buffer.from(JSON.stringify({ exp: 1 })).toString("base64url")}.signature`;
+    writeFileSync(
+      join(sibling, "auth.json"),
+      JSON.stringify({
+        tokens: {
+          access_token: expired,
+          account_id: "acct-luna",
+          refresh_token: "do-not-read",
+        },
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) =>
+        String((init.headers as Record<string, string>).authorization).includes(
+          expired,
+        )
+          ? new Response("", { status: 401 })
+          : new Response(
+              JSON.stringify({
+                account_id: "acct-main",
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 20,
+                    limit_window_seconds: 604_800,
+                    reset_after_seconds: 1_000,
+                  },
+                },
+              }),
+              { status: 200 },
+            ),
+      ),
+    );
+    const adapter = (
+      await import("../../src/providers/codex.js")
+    ).createCodexAdapter();
+    const rows = await fetchAccountQuotas(adapter, options);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({
+      accountKey: "codex-luna",
+      windows: [],
+      state: { status: "unavailable", authStatus: "expired_refreshable" },
+      accountLocator: { path: sibling, delegateEligible: false },
+    });
   });
 });

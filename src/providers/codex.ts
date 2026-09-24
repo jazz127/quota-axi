@@ -21,6 +21,7 @@ import {
 import type {
   AuthProviderReport,
   AuthSourceReport,
+  AccountLocator,
   ProviderAccount,
   ProviderAdapter,
   ProviderOptions,
@@ -28,6 +29,7 @@ import type {
   QuotaWindow,
   SourceAttempt,
 } from "../types.js";
+import { AccountDiscoveryError } from "./accounts.js";
 import {
   failedProvider,
   sourceNames,
@@ -84,6 +86,7 @@ type AvailableCredentialState = {
 type AdvisoryExpiredCredentialState = {
   status: "expired";
   credentials: CodexCredentials;
+  refreshable: boolean;
   source: AuthSourceReport;
 };
 type UnavailableCredentialState = {
@@ -139,9 +142,10 @@ export function createCodexAdapter(
     label: "Codex",
     discoverAccounts: () => discoverCodexHomeAccounts(dependencies),
     fetchQuota: async (options) =>
-      withCredentialHome(
+      withCodexLocator(
         await fetchSingleWinnerQuota(dependencies, options),
         selectedCodexHome(),
+        dependencies,
       ),
     inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
   };
@@ -152,9 +156,10 @@ export const codexAdapter = createCodexAdapter();
 export async function fetchQuota(
   options: ProviderOptions,
 ): Promise<ProviderQuota> {
-  return withCredentialHome(
+  return withCodexLocator(
     await fetchSingleWinnerQuota(defaultCodexDependencies, options),
     selectedCodexHome(),
+    defaultCodexDependencies,
   );
 }
 
@@ -164,38 +169,49 @@ function selectedCodexHome(): string {
   return resolve(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
 }
 
-function withCredentialHome(
-  report: ProviderQuota,
+function nativeLocator(
   home: string,
-): ProviderQuota {
-  return report.source === "oauth" || report.source === "cli-rpc"
-    ? {
-        ...report,
-        credentialHome: home,
-        accountLabel:
-          report.accountLabel ?? accountLabel(report.account?.accountId),
-      }
-    : report;
+  delegateEligible: boolean,
+): AccountLocator {
+  return { kind: "codex-home", path: home, delegateEligible };
 }
 
-function accountLabel(accountId: string | undefined): string | undefined {
-  return accountId ? `#${accountId.slice(-8)}` : undefined;
+async function withCodexLocator(
+  report: ProviderQuota,
+  home: string,
+  dependencies: CodexDependencies,
+): Promise<ProviderQuota> {
+  if (report.source?.startsWith("pi:")) {
+    const entry = report.source.slice(3);
+    const inspection = await inspectPiEntry(dependencies, entry);
+    return inspection.path
+      ? {
+          ...report,
+          accountLocator: { kind: "pi-auth", path: inspection.path, entry },
+        }
+      : report;
+  }
+  return { ...report, accountLocator: nativeLocator(home, true) };
 }
 
 /** Extra homes are a JSON array of absolute paths; a bad entry cannot select a credential. */
 function configuredCodexHomes(): string[] {
   const raw = process.env[EXTRA_HOMES_ENV];
-  if (!raw) return [];
+  if (raw === undefined || !raw.trim()) return [];
   try {
     const entries: unknown = JSON.parse(raw);
-    return Array.isArray(entries)
-      ? entries.filter(
-          (entry): entry is string =>
-            typeof entry === "string" && isAbsolute(entry),
-        )
-      : [];
+    if (
+      !Array.isArray(entries) ||
+      !entries.every(
+        (entry) =>
+          typeof entry === "string" && isAbsolute(entry) && entry.trim(),
+      )
+    ) {
+      throw new AccountDiscoveryError("invalid_home_configuration");
+    }
+    return entries;
   } catch {
-    return [];
+    throw new AccountDiscoveryError("invalid_home_configuration");
   }
 }
 
@@ -226,26 +242,46 @@ async function discoverCodexHomeAccounts(
           : `codex-${createHash("sha256").update(home).digest("hex").slice(0, 16)}`;
     extra.push({ home, key: name });
   }
-  if (extra.length === 0) return discoverCodexAccounts(dependencies);
   const legacy = await discoverCodexAccounts(dependencies);
+  if (extra.length === 0 && !legacy) return undefined;
   const selectedAccounts: ProviderAccount[] = legacy ?? [
     {
       accountKey: CODEX_HOME_ACCOUNT_KEY,
+      locator: nativeLocator(selected, true),
       fetchQuota: (_options) => fetchSingleWinnerQuota(dependencies, _options),
       inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
     },
   ];
+  const selectedLanes = await Promise.all(
+    selectedAccounts.map(async (account) => {
+      const piEntry = account.accountKey.startsWith("openai-codex")
+        ? account.accountKey
+        : undefined;
+      const inspection = piEntry
+        ? await inspectPiEntry(dependencies, piEntry)
+        : undefined;
+      const locator: AccountLocator | undefined =
+        inspection?.path && piEntry
+          ? { kind: "pi-auth", path: inspection.path, entry: piEntry }
+          : piEntry
+            ? undefined
+            : nativeLocator(selected, true);
+      return {
+        ...account,
+        ...(locator ? { locator } : {}),
+        fetchQuota: async (options: ProviderOptions) => {
+          const report = await account.fetchQuota(options);
+          return report && withCodexLocator(report, selected, dependencies);
+        },
+      };
+    }),
+  );
   return [
-    ...selectedAccounts.map((account) => ({
-      ...account,
-      fetchQuota: async (options: ProviderOptions) => {
-        const report = await account.fetchQuota(options);
-        return report && withCredentialHome(report, selected);
-      },
-    })),
+    ...selectedLanes,
     ...extra.map(
       ({ home, key }): ProviderAccount => ({
         accountKey: key,
+        locator: nativeLocator(home, false),
         fetchQuota: () => fetchOtherCodexHome(home, key),
         inspectAuth: async () => ({
           provider: "codex",
@@ -278,10 +314,6 @@ async function fetchOtherCodexHome(
           [{ source: "oauth", status: "success" }],
           accountId,
         ),
-        credentialHome: home,
-        accountLabel: accountLabel(
-          result.result.account?.accountId ?? accountId,
-        ),
         accountKeys: [key],
       };
     }
@@ -291,18 +323,24 @@ async function fetchOtherCodexHome(
         : result.kind === "live_no_quota"
           ? "Codex quota unavailable"
           : result.error;
-    return {
-      ...codexFailureReport(
-        error,
-        result.kind === "transient" ? result.retryAfter : undefined,
-        [{ source: "oauth", status: "failed", error }],
-        "oauth",
-        key,
-        accountId ? [accountId] : [],
-        key,
-      ),
-      credentialHome: home,
-    };
+    const report = codexFailureReport(
+      error,
+      result.kind === "transient" ? result.retryAfter : undefined,
+      [{ source: "oauth", status: "failed", error }],
+      "oauth",
+      key,
+      accountId ? [accountId] : [],
+      key,
+    );
+    if (
+      result.kind === "rejected" &&
+      state.status === "expired" &&
+      state.refreshable
+    ) {
+      report.state.authStatus = "expired_refreshable";
+      if (!report.state.stale) report.state.status = "unavailable";
+    }
+    return report;
   }
   const error =
     state.status === "missing"
@@ -325,7 +363,6 @@ async function fetchOtherCodexHome(
       [],
       key,
     ),
-    credentialHome: home,
   };
 }
 
@@ -1030,11 +1067,6 @@ function codexSuccessReport(
     attempts,
   });
   stampCodexStoredAccountId(report, storedAccountId);
-  if (source === "oauth" || source === "cli-rpc") {
-    report.accountLabel = accountLabel(
-      quota.account?.accountId ?? storedAccountId,
-    );
-  }
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;
@@ -1606,6 +1638,9 @@ function extractCredentialState(
     return {
       status: "expired",
       credentials,
+      refreshable:
+        Object.hasOwn(tokens, "refresh_token") ||
+        Object.hasOwn(tokens, "refreshToken"),
       source: { source: "auth-json", path, status: "expired" },
     };
   }

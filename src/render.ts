@@ -35,8 +35,6 @@ export function renderHelp(lines: string[]): string {
 type QuotaRow = {
   provider: ProviderId;
   accountKey?: string;
-  accountLabel?: string;
-  credentialHome?: string;
   scope: string;
   effectivePercentRemaining: number;
   [SELECTION_SCALAR_KEY]: number | string;
@@ -54,8 +52,6 @@ type QuotaRow = {
 type ExhaustionRow = {
   provider: ProviderId;
   accountKey?: string;
-  accountLabel?: string;
-  credentialHome?: string;
   scope: string;
   usableRunwaySeconds: number | string;
   projectedExhaustedAt: string;
@@ -66,8 +62,6 @@ type ExhaustionRow = {
 type AttentionRow = {
   provider: ProviderId;
   accountKey?: string;
-  accountLabel?: string;
-  credentialHome?: string;
   scope: string;
   kind: string;
   detail: string;
@@ -186,12 +180,6 @@ function quotaRow(
     confidence: scope.runway?.projectionConfidence ?? UNKNOWN,
     limitedBy: joinIds(scope.limitingWindowIds) ?? UNKNOWN,
     resetsAt: bindingReset(provider.windows, scope),
-    ...(provider.credentialHome
-      ? {
-          accountLabel: provider.accountLabel ?? "unknown",
-          credentialHome: provider.credentialHome,
-        }
-      : {}),
   };
 }
 
@@ -231,15 +219,7 @@ function providerAttention(
   return [
     ...providerStateRows(provider, measured, scopeRows),
     ...degradedSourceRows(provider),
-  ].map((row) =>
-    provider.credentialHome
-      ? {
-          ...row,
-          accountLabel: provider.accountLabel ?? "unknown",
-          credentialHome: provider.credentialHome,
-        }
-      : row,
-  );
+  ];
 }
 
 function shareRows(provider: ProviderQuota): AttentionRow[] {
@@ -505,6 +485,10 @@ function auditBlocks(response: QuotaAxiResponse): string[] {
     organization: provider.account?.organization ?? NONE,
     accountId: provider.account?.accountId ?? NONE,
     identityStatus: provider.account?.identityStatus ?? UNKNOWN,
+    locatorKind: provider.accountLocator?.kind ?? NONE,
+    locatorPath: provider.accountLocator?.path ?? NONE,
+    locatorEntry: provider.accountLocator?.entry ?? NONE,
+    delegateEligible: provider.accountLocator?.delegateEligible ?? false,
   }));
   const attempts = response.providers.flatMap((provider) =>
     (provider.attempts ?? []).map((attempt) => attemptRow(provider, attempt)),
@@ -617,6 +601,7 @@ export function redactedResponse(
     providers: response.providers.map((provider) => ({
       ...provider,
       account: undefined,
+      accountLocator: undefined,
       attempts: undefined,
     })),
   };

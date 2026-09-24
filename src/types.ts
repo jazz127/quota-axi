@@ -269,9 +269,18 @@ export type DegradedSource = {
   error?: string;
 };
 
+/** Local credential route, shown only in full output and never cached. */
+export type AccountLocator = {
+  kind: "codex-home" | "pi-auth";
+  path: string;
+  entry?: string;
+  delegateEligible?: boolean;
+};
+
 export type ProviderAccount = {
   /** Opaque local lane identity, stable across refresh and discovery order. */
   accountKey: string;
+  locator?: AccountLocator;
   /**
    * Resolves undefined when the lane establishes no distinct account. A
    * reading that covers credential keys folded into this lane names them in
@@ -292,10 +301,8 @@ export type ProviderQuota = {
    * just its own key, and a provider without account discovery lists `default`.
    */
   accountKeys?: string[];
-  /** Native credential home used for this reading, when applicable. */
-  credentialHome?: string;
-  /** Short non-secret account identifier for multi-home display. */
-  accountLabel?: string;
+  /** Full-only credential route evidence; never written to quota cache. */
+  accountLocator?: AccountLocator;
   /** Display name. Omitted from default `--json`; see `--full`. */
   label?: string;
   /** Report provenance. Omitted from default `--json`; see `--full`. */
