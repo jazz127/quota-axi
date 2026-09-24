@@ -12,6 +12,7 @@ import {
   fetchAccountQuotas,
   inspectAccountAuth,
 } from "../../src/providers/accounts.js";
+import { writeCachedProviders } from "../../src/cache.js";
 import { quotaJsonReport, renderQuotaToon } from "../../src/render.js";
 import { renderQuotaTui } from "../../src/tui.js";
 import type { ProviderOptions } from "../../src/types.js";
@@ -236,6 +237,7 @@ describe("Codex native home discovery", () => {
     expect(firstRead.map((row) => row.windows[0]?.percentUsed)).toEqual([
       100, 13,
     ]);
+    writeCachedProviders(firstRead);
     unlinkSync(join(signedOutLater, "auth.json"));
 
     const secondRead = await fetchAccountQuotas(adapter, options);
