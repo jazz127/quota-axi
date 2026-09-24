@@ -862,8 +862,8 @@ describe("Codex Pi sibling account lanes", () => {
       "openai-codex-work",
     ]);
     expect(reports[0]).toMatchObject({
-      windows: [{ percentUsed: 42 }],
-      state: { status: "stale", stale: true },
+      windows: [],
+      state: { status: "error", stale: false },
     });
   });
 
@@ -1253,8 +1253,10 @@ describe("Codex Pi sibling account lanes", () => {
       await import("../../src/providers/codex.js")
     ).createCodexAdapter();
     const reports = await fetchAccountQuotas(adapter, OPTIONS);
-    expect(reports[0]?.windows[0]?.percentUsed).toBe(20);
-    expect(reports[0]?.state.stale).toBe(true);
+    expect(reports[0]).toMatchObject({
+      windows: [],
+      state: { status: "auth_required", stale: false },
+    });
     expect(reports[1]).toMatchObject({
       accountKey: "openai-codex-work",
       windows: [{ percentUsed: 80 }],
