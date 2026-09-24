@@ -485,9 +485,7 @@ async function readProvider(
 function readMaxAge(flags: QuotaFlags): number {
   const environmentMaxAge =
     flags.maxAgeSeconds === undefined ? readMaxAgeEnv() : undefined;
-  return flags.full
-    ? 0
-    : (flags.maxAgeSeconds ?? environmentMaxAge ?? 0);
+  return flags.full ? 0 : (flags.maxAgeSeconds ?? environmentMaxAge ?? 0);
 }
 
 /** Env var naming a quota snapshot file that answers instead of any vendor. */
