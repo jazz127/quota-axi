@@ -1237,7 +1237,7 @@ describe("Codex Pi sibling account lanes", () => {
       }),
     });
     stubUsageByAccount({
-      "acct-personal": new Response("unauthorized", { status: 401 }),
+      "acct-personal": new Response("unavailable", { status: 503 }),
       "acct-work": usage(80, "work@example.invalid", "acct-work"),
     });
 
@@ -1252,6 +1252,128 @@ describe("Codex Pi sibling account lanes", () => {
       windows: [{ percentUsed: 80 }],
       state: { status: "fresh", stale: false },
     });
+  });
+
+  it("retires a Pi lane's own snapshot when its credential is rejected", async () => {
+    const { writeCachedProviders, readCachedProvider } =
+      await import("../../src/cache.js");
+    writeCachedProviders([
+      {
+        provider: "codex",
+        accountKey: "openai-codex",
+        label: "Codex",
+        source: "pi:openai-codex",
+        windows: [
+          {
+            id: "weekly",
+            label: "week",
+            kind: "weekly",
+            percentUsed: 20,
+            windowSeconds: 604_800,
+          },
+        ],
+        state: {
+          status: "fresh",
+          stale: false,
+          refreshedAt: new Date().toISOString(),
+          sourcesTried: ["pi:openai-codex"],
+        },
+      },
+    ]);
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "personal-access-token",
+        accountId: "acct-personal",
+      }),
+      "openai-codex-work": piOauthEntry({
+        access: "work-access-token",
+        accountId: "acct-work",
+      }),
+    });
+    stubUsageByAccount({
+      "acct-personal": new Response("unauthorized", { status: 401 }),
+      "acct-work": usage(80, "work@example.invalid", "acct-work"),
+    });
+
+    const adapter = (
+      await import("../../src/providers/codex.js")
+    ).createCodexAdapter();
+    const reports = await fetchAccountQuotas(adapter, OPTIONS);
+    expect(reports[0]).toMatchObject({
+      accountKey: "openai-codex",
+      windows: [],
+      state: {
+        status: "auth_required",
+        stale: false,
+        error: "Codex sign-in required",
+      },
+    });
+    expect(readCachedProvider("codex", "openai-codex")).toBeUndefined();
+  });
+
+  it("retires a rejected account's snapshot from the slot it held as the sole lane", async () => {
+    writeNativeAuth("native-access-token", "acct-personal");
+    stubUsageByToken({
+      "native-access-token": usage(
+        30,
+        "personal@example.invalid",
+        "acct-personal",
+      ),
+    });
+    const sole = await cacheCodexRead();
+    expect(sole[0]?.accountKey).toBeUndefined();
+
+    // A work sibling appears, so the same native account moves to a keyed slot.
+    writePiAuth({
+      "openai-codex-work": piOauthEntry({
+        access: "work-access-token",
+        accountId: "acct-work",
+      }),
+    });
+    stubUsageByToken({
+      "native-access-token": usage(
+        40,
+        "personal@example.invalid",
+        "acct-personal",
+      ),
+      "work-access-token": usage(80, "work@example.invalid", "acct-work"),
+    });
+    expect((await cacheCodexRead()).map((row) => row.accountKey)).toEqual([
+      "codex-home",
+      "openai-codex-work",
+    ]);
+
+    stubUsageByToken({
+      "native-access-token": new Response("unauthorized", { status: 401 }),
+      "work-access-token": new Response("unavailable", { status: 503 }),
+    });
+    const rejected = await readCodexLanes();
+    expect(rejected[0]).toMatchObject({
+      accountKey: "codex-home",
+      windows: [],
+      state: { status: "auth_required", stale: false },
+    });
+    expect(rejected[1]).toMatchObject({
+      accountKey: "openai-codex-work",
+      windows: [{ percentUsed: 80 }],
+      state: { status: "stale", stale: true },
+    });
+    const { readCachedProvider } = await import("../../src/cache.js");
+    expect(readCachedProvider("codex")).toBeUndefined();
+    expect(readCachedProvider("codex", "codex-home")).toBeUndefined();
+    expect(readCachedProvider("codex", "openai-codex-work")).toBeDefined();
+
+    // The sibling leaves and the native probe now fails transiently: the
+    // signed-out account's old windows must not come back as stale.
+    rmSync(join(process.env.PI_CODING_AGENT_DIR!, "auth.json"));
+    stubUsageByToken({
+      "native-access-token": new Response("unavailable", { status: 503 }),
+    });
+    const again = await readCodexLanes();
+    expect(again).toHaveLength(1);
+    expect(again[0]?.accountKey).toBeUndefined();
+    expect(again[0]?.windows).toEqual([]);
+    expect(again[0]?.state.stale).toBe(false);
   });
 
   it("reuses the sole lane's own cached reading when its probe fails", async () => {
