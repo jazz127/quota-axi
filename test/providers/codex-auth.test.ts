@@ -862,7 +862,7 @@ describe("Codex credential-state reporting", () => {
       refreshCredentials: false,
     });
 
-    expect(result.state.status).toBe("error");
+    expect(result.state.status).toBe("unavailable");
     expect(result.state.error).toBe("Codex quota unavailable");
     expect(result.state.status).not.toBe("auth_required");
   });
@@ -894,7 +894,7 @@ describe("Codex credential-state reporting", () => {
 
     // The native credential was never rejected - the network was. Advising a
     // sign-in here sends the reader to fix a credential that is fine.
-    expect(result.state.status).toBe("error");
+    expect(result.state.status).toBe("unavailable");
     expect(result.state.error).toBe("Codex quota request timed out");
     expect(result.state.status).not.toBe("auth_required");
     expect(result.source).toBe("oauth");
@@ -957,7 +957,7 @@ describe("Codex credential-state reporting", () => {
       });
 
       expect(result.source).toBe("oauth");
-      expect(result.state.status).toBe("error");
+      expect(result.state.status).toBe("unavailable");
       expect(result.state.error).toBe(expectedError);
       expect(result.attempts).toEqual([
         { source: "oauth", status: "failed", error: expectedError },
@@ -998,7 +998,7 @@ describe("Codex credential-state reporting", () => {
     const interpreted = withQuotaSemantics(result, new Date().toISOString());
 
     expect(result.source).toBe("oauth");
-    expect(result.state.status).toBe("error");
+    expect(result.state.status).toBe("unavailable");
     expect(result.state.error).toBe("network unavailable");
     expect(result.attempts).toEqual([
       { source: "oauth", status: "failed", error: "network unavailable" },
@@ -1006,6 +1006,99 @@ describe("Codex credential-state reporting", () => {
     expect(bearers).toEqual([`Bearer ${nativeToken}`, `Bearer ${nativeToken}`]);
     expect(bearers).not.toContain(`Bearer ${piToken}`);
     expect(interpreted.state.degradedSources).toBeUndefined();
+  });
+
+  it.each([
+    {
+      identity: "no stored account id",
+      accountId: undefined,
+      expectedStatus: "unavailable",
+    },
+    {
+      identity: "a stored account id",
+      accountId: "acct-native",
+      expectedStatus: "error",
+    },
+  ])(
+    "reports a transient failure of a credential with $identity as $expectedStatus",
+    async ({ accountId, expectedStatus }) => {
+      writeAuth({
+        tokens: {
+          access_token: jwt({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+          ...(accountId ? { account_id: accountId } : {}),
+        },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new TypeError("network unavailable");
+        }),
+      );
+
+      const { fetchQuota } = await import("../../src/providers/codex.js");
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.source).toBe("oauth");
+      expect(result.state.status).toBe(expectedStatus);
+      expect(result.state.error).toBe("network unavailable");
+      expect(result.windows).toEqual([]);
+    },
+  );
+
+  it("keeps an identity-less credential rejection a sign-in verdict", async () => {
+    writeAuth({
+      tokens: {
+        access_token: jwt({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+
+    expect(result.state.status).toBe("auth_required");
+    expect(result.state.error).toBe("Codex sign-in required");
+  });
+
+  it("reports an identity-less transient failure unavailable without serving another account's cache", async () => {
+    const { stampCodexStoredAccountId, writeCachedProviders } =
+      await import("../../src/cache.js");
+    const snapshot = cachedCodexSnapshot();
+    stampCodexStoredAccountId(snapshot, "acct-signed-in");
+    writeCachedProviders([snapshot]);
+    writeAuth({
+      tokens: {
+        access_token: jwt({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("network unavailable");
+      }),
+    );
+
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+
+    expect(result.state).toMatchObject({
+      status: "unavailable",
+      stale: false,
+      error: "network unavailable",
+    });
+    expect(result.windows).toEqual([]);
   });
 
   it("probes both stored-expired credentials before reporting a sign-out", async () => {
