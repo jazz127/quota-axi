@@ -769,6 +769,31 @@ describe("Codex Pi sibling account lanes", () => {
     ]);
   });
 
+  it("keeps a successful CLI cache owned by the returned account", async () => {
+    mockCodexCli({ accountId: "acct-cli", usedPercent: 15 });
+    const first = await cacheCodexRead();
+    expect(first[0]).toMatchObject({
+      source: "cli-rpc",
+      account: { accountId: "acct-cli" },
+      windows: [{ percentUsed: 15 }],
+    });
+
+    const { readCachedCodexProvider } = await import("../../src/cache.js");
+    expect(readCachedCodexProvider("codex-home", ["acct-cli"])).toMatchObject(
+      { windows: [{ percentUsed: 15 }] },
+    );
+    expect(
+      readCachedCodexProvider("codex-home", ["acct-other"]),
+    ).toBeUndefined();
+
+    mockCodexCli("unreachable");
+    const failed = await readCodexLanes();
+    expect(failed[0]).toMatchObject({
+      windows: [],
+      state: { status: "unavailable", stale: false },
+    });
+  });
+
   it("opens no CLI lane when the Codex CLI fallback is unavailable", async () => {
     writePiAuth({
       "openai-codex-work": piOauthEntry({

@@ -859,7 +859,10 @@ function codexSuccessReport(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
-  stampCodexStoredAccountId(report, storedAccountId);
+  stampCodexStoredAccountId(
+    report,
+    quota.account?.accountId ?? storedAccountId,
+  );
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;
