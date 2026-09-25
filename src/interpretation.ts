@@ -1,5 +1,4 @@
 import { degradedSources } from "./lib/source-attempts.js";
-import { copyCodexStoredAccountId } from "./cache.js";
 import {
   computeEffectiveRunway,
   computeWindowPace,
@@ -53,17 +52,14 @@ export function withQuotaSemantics(
     }),
   }));
   const withWindows = { ...provider, windows };
-  copyCodexStoredAccountId(provider, withWindows);
   const semantics = semanticsFor(withWindows, generatedAt);
-  const result = {
+  return {
     ...withWindows,
     state: { ...provider.state, ...supersededSources(provider) },
     quotaSemantics: provider.state.stale
       ? staleSemantics(semantics)
       : semantics,
   };
-  copyCodexStoredAccountId(withWindows, result);
-  return result;
 }
 
 /**

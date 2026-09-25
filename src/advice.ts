@@ -1,5 +1,4 @@
 import { coveredAccountKeys } from "./providers/accounts.js";
-import { copyCodexStoredAccountId } from "./cache.js";
 import {
   REFRESH_COMMAND_NOT_FOUND,
   REFRESH_EXIT_STATUS,
@@ -35,7 +34,7 @@ export function annotateQuotaAdvice(
     const accountKey = expanded
       ? (provider.accountKey ?? "default")
       : undefined;
-    const annotated = annotateProviderAdvice({
+    return annotateProviderAdvice({
       ...provider,
       ...(accountKey ? { accountKey } : {}),
       accountKeys: coveredAccountKeys(
@@ -43,8 +42,6 @@ export function annotateQuotaAdvice(
         provider.accountKeys,
       ),
     });
-    copyCodexStoredAccountId(provider, annotated);
-    return annotated;
   });
   const help = providers.flatMap(providerHelpLines);
   return {

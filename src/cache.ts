@@ -127,14 +127,6 @@ export function stampCodexStoredAccountId(
     (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID] = accountId;
 }
 
-export function copyCodexStoredAccountId(
-  from: ProviderQuota,
-  to: ProviderQuota,
-): void {
-  const accountId = (from as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID];
-  if (accountId) stampCodexStoredAccountId(to, accountId);
-}
-
 function codexStampContextId(provider: ProviderQuota): string | undefined {
   return codexAccountContextId(
     (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID],
