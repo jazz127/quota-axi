@@ -67,7 +67,7 @@ const oneShot = [
   "--no-credential-refresh",
 ];
 
-function select(login: string, copilotTokens?: Record<string, string>) {
+function select(login: string, tokens?: Record<string, string>) {
   fixture.login = login;
   writeFileSync(
     join(fixture.home, ".copilot/config.json"),
@@ -77,7 +77,13 @@ function select(login: string, copilotTokens?: Record<string, string>) {
         host: "https://github.com",
         login: user,
       })),
-      ...(copilotTokens ? { copilotTokens } : {}),
+      ...(tokens
+        ? {
+            authTokens: Object.fromEntries(
+              Object.entries(tokens).map(([key, token]) => [key, { token }]),
+            ),
+          }
+        : {}),
     }),
   );
 }
@@ -210,7 +216,7 @@ describe("Copilot composed credential boundaries", () => {
     writeFileSync(
       join(fixture.home, ".copilot/config.json"),
       JSON.stringify({
-        copilotTokens: { "https://github.com:account-a": tokenA },
+        authTokens: { "https://github.com:account-a": { token: tokenA } },
       }),
     );
     const report = await fetchQuota(ordinary);

@@ -407,7 +407,7 @@ export async function resolveCopilotCliConfigCredential(
     return unresolvedConfig("unsupported", "environment_selection_unsupported");
   if (identity.host !== "https://github.com")
     return unresolvedConfig("unsupported", "selected_host_unsupported");
-  const tokens = data.copilotTokens;
+  const tokens = data.authTokens;
   if (tokens === undefined || tokens === null)
     return unresolvedConfig("absent", undefined, true);
   if (!tokens || typeof tokens !== "object" || Array.isArray(tokens))
@@ -415,9 +415,17 @@ export async function resolveCopilotCliConfigCredential(
   const entries = tokens as Record<string, unknown>;
   if (!Object.hasOwn(entries, identity.account))
     return unresolvedConfig("absent", undefined, true);
+  const entry = entries[identity.account];
+  if (
+    !entry ||
+    typeof entry !== "object" ||
+    Array.isArray(entry) ||
+    !Object.hasOwn(entry, "token")
+  )
+    return unresolvedConfig("structurally_invalid", "credentials_invalid");
   if (presenceOnly !== false)
     return unresolvedConfig("unsupported", "value_read_deferred");
-  const value = entries[identity.account];
+  const value = (entry as Record<string, unknown>).token;
   if (
     typeof value !== "string" ||
     value.length > TOKEN_LIMIT ||
