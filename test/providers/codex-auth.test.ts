@@ -375,6 +375,55 @@ describe("Codex credential-state reporting", () => {
     expect(result.windows).toEqual([]);
   });
 
+  it("retires the rejected native cache despite malformed Pi auth", async () => {
+    const {
+      readCachedProvider,
+      stampCodexStoredAccountId,
+      writeCachedProviders,
+    } = await import("../../src/cache.js");
+    const native = cachedCodexSnapshot();
+    stampCodexStoredAccountId(native, "acct-native");
+    const other = cachedCodexSnapshot();
+    other.accountKey = "openai-codex-work";
+    stampCodexStoredAccountId(other, "acct-other");
+    writeCachedProviders([native, other]);
+    writeAuth({
+      tokens: {
+        access_token: jwt({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+        account_id: "acct-native",
+      },
+    });
+    mkdirSync(process.env.PI_CODING_AGENT_DIR!, { recursive: true });
+    writeFileSync(piAuthFile(), "{malformed", { mode: 0o600 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+    const binary = join(tempDir!, "codex-fixture");
+    process.env.QUOTA_AXI_CODEX_BINARY = binary;
+    const spawn = vi.fn(() => successfulChild({ account: null }, {}));
+    vi.doMock("node:child_process", () => ({ spawn }));
+    vi.doMock("../../src/lib/process.js", () => ({
+      findCommandPath: vi.fn(async () => binary),
+      terminateChild: vi.fn(),
+    }));
+
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+
+    expect(result.state).toMatchObject({
+      status: "auth_required",
+      stale: false,
+      error: "Codex sign-in required",
+    });
+    expect(result.windows).toEqual([]);
+    expect(readCachedProvider("codex")).toBeUndefined();
+    expect(readCachedProvider("codex", "openai-codex-work")).toBeDefined();
+  });
+
   it("retires a cached snapshot on sign-out and keeps it for soft expiry or a transient probe", async () => {
     const {
       stampCodexStoredAccountId,

@@ -882,6 +882,12 @@ function codexFailureReport(
   credentialKey = codexCredentialKey(source) ?? CODEX_HOME_ACCOUNT_KEY,
 ): ProviderQuota {
   const softExpiry = error === CODEX_ACCESS_TOKEN_EXPIRED;
+  if (error === CODEX_SIGN_IN_REQUIRED && accountIds.length > 0) {
+    try {
+      retireCodexAccount(accountIds);
+    } catch {
+    }
+  }
   const cached = readCachedCodexProvider(accountKey, accountIds);
   const stale = staleUnlessSignOut(
     cached,
