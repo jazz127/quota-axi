@@ -12,14 +12,16 @@ import type {
 } from "./types.js";
 import type { ResetPredictionAggregate } from "./reset-predictions.js";
 import { creditWindowMatchesBalance } from "./render.js";
+import { isUsageFetchFailure } from "./providers/usage-fetch-failure.js";
 
 /**
  * Human terminal report ("Direction D'"): a two-up card grid with thin
  * headroom bars and a linear-pace marker wherever pace is known. This surface is
  * presentation only - it renders the same redacted response the TOON and JSON
- * surfaces receive, grouped by the caller's presence classification, and
- * derives nothing new from providers or the cache. Providers with nothing set
- * up fold into one footer line unless the caller asks to draw them in full.
+ * surfaces receive, preserving input order among readings and putting
+ * attention cards after them. It derives nothing new from providers or the
+ * cache. Providers with nothing set up fold into one footer line unless the
+ * caller asks to draw them in full.
  */
 
 export type TuiColorDepth = "none" | "16" | "256" | "truecolor";
@@ -166,23 +168,30 @@ export function renderQuotaTui(
   const timeZone = options.timeZone;
   const show = options.show ?? "remaining";
 
-  const tiers: Record<ProviderPresence, ProviderQuota[]> = {
+  const tiers: Record<ProviderPresence | "stale", ProviderQuota[]> = {
     live: [],
+    stale: [],
     attention: [],
     absent: [],
   };
   response.providers.forEach((provider, index) => {
     const presence = options.presence?.[index] ?? providerPresence(provider);
-    tiers[
-      presence === "absent" &&
-      provider.provider === "codex" &&
-      options.resetPrediction
+    const tier = isStale(provider)
+      ? "stale"
+      : presence === "absent" &&
+          provider.provider === "codex" &&
+          options.resetPrediction
         ? "attention"
-        : presence
-    ].push(provider);
+        : presence;
+    tiers[tier].push(provider);
   });
-  const { live, attention, absent } = tiers;
-  const carded = [...live, ...attention];
+  const { attention, absent } = tiers;
+  const carded = response.providers
+    .filter((provider, index) => {
+      const presence = options.presence?.[index] ?? providerPresence(provider);
+      return isStale(provider) || presence === "live";
+    })
+    .concat(attention);
   const card = (provider: ProviderQuota): Card =>
     buildCard(provider, generatedAtMs, show, options.resetPrediction);
 
@@ -301,7 +310,11 @@ function resolveColumns(columns: number | undefined): number {
 }
 
 function isLive(provider: ProviderQuota): boolean {
-  return provider.state.status === "fresh" || provider.state.status === "stale";
+  return provider.state.status === "fresh";
+}
+
+function isStale(provider: ProviderQuota): boolean {
+  return provider.state.status === "stale";
 }
 
 /**
@@ -311,13 +324,14 @@ function isLive(provider: ProviderQuota): boolean {
  */
 function headerText(
   response: QuotaAxiResponse,
-  tiers: Record<ProviderPresence, ProviderQuota[]>,
+  tiers: Record<ProviderPresence | "stale", ProviderQuota[]>,
   width: number,
   timeZone?: string,
 ): string {
   const attention = tiers.attention.length;
   const counts = [
     `${tiers.live.length} live`,
+    ...(tiers.stale.length > 0 ? [`${tiers.stale.length} stale`] : []),
     `${attention} ${attention === 1 ? "needs" : "need"} attention`,
     `${tiers.absent.length} not set up`,
   ];
@@ -340,7 +354,35 @@ function buildCard(
 ): Card {
   return isLive(provider)
     ? buildLiveCard(provider, generatedAtMs, show, resetPrediction)
-    : buildFailedCard(provider, resetPrediction);
+    : isStale(provider)
+      ? muteStaleCard(
+          buildLiveCard(provider, generatedAtMs, show, resetPrediction),
+        )
+      : buildFailedCard(provider, resetPrediction);
+}
+
+function muteStaleCard(card: Card): Card {
+  const muted = new Set<StyleName>([
+    "ok",
+    "okBold",
+    "warn",
+    "warnBold",
+    "crit",
+    "critBold",
+    "marker",
+    "track",
+    "border",
+  ]);
+  return card.map((line) =>
+    line.map((segment) => ({
+      ...segment,
+      style: segment.style?.startsWith("accent:")
+        ? "dimBold"
+        : segment.style && muted.has(segment.style)
+          ? "dimmer"
+          : segment.style,
+    })),
+  );
 }
 
 /** How old a reused reading is, as the card title's `reused 42s` marker. */
@@ -363,7 +405,7 @@ function buildLiveCard(
   show: TuiShow,
   resetPrediction?: ResetPredictionAggregate,
 ): Card {
-  const stale = provider.state.stale;
+  const stale = isStale(provider);
   const rightTitle = [
     provider.plan,
     provider.source,
@@ -377,8 +419,8 @@ function buildLiveCard(
   const lines: Line[] = [
     titleLine(
       {
-        text: ` ● ${provider.provider} `,
-        style: `accent:${provider.provider}`,
+        text: ` ${stale ? "◌" : "●"} ${provider.provider} `,
+        style: stale ? "dimBold" : `accent:${provider.provider}`,
       },
       rightTitle,
       "border",
@@ -421,16 +463,33 @@ function buildLiveCard(
   }
 
   for (const note of cardNotes(provider)) {
-    lines.push(
-      interior(
-        [{ text: `   ${truncate(note, CARD_INTERIOR - 4)}`, style: "dimmer" }],
-        "border",
-      ),
-    );
+    const parts = stale
+      ? wrapCardNote(note)
+      : [truncate(note, CARD_INTERIOR - 4)];
+    for (const part of parts) {
+      lines.push(interior([{ text: `   ${part}`, style: "dimmer" }], "border"));
+    }
   }
 
   lines.push(interior([], "border"));
   lines.push(bottomLine("border"));
+  return lines;
+}
+
+function wrapCardNote(note: string): string[] {
+  const width = CARD_INTERIOR - 4;
+  const lines: string[] = [];
+  let current = "";
+  for (const word of note.split(/\s+/)) {
+    const next = current ? `${current} ${word}` : word;
+    if (displayWidth(next) > width && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  if (current) lines.push(truncate(current, width));
   return lines;
 }
 
@@ -541,8 +600,7 @@ function creditsOnlyHeadline(
 
 function creditsHeadline(provider: ProviderQuota): Line[] | undefined {
   if (provider.windows.length === 0) return undefined;
-  if (provider.state.stale || provider.state.status !== "fresh")
-    return undefined;
+  if (isStale(provider) || provider.state.status !== "fresh") return undefined;
   if (!hasDisplayableCredits(provider)) return undefined;
   if (creditWindowMatchesBalance(provider)) return undefined;
   const credits = provider.credits;
@@ -955,6 +1013,20 @@ function runwayVerdict(headline: EffectiveAvailability | undefined): Line {
 
 function cardNotes(provider: ProviderQuota): string[] {
   const notes: string[] = [];
+  if (isStale(provider)) {
+    const error = provider.state.error
+      ? `${isUsageFetchFailure(provider) ? "fetch failed " : ""}${provider.state.error}`
+      : undefined;
+    notes.push(
+      [
+        `last refreshed ${provider.state.refreshedAt ?? "unknown"}`,
+        error,
+        provider.state.reason ? `reason ${provider.state.reason}` : undefined,
+      ]
+        .filter((part): part is string => part !== undefined)
+        .join(" · "),
+    );
+  }
   if (provider.state.retryAfter) {
     notes.push(`retry after ${provider.state.retryAfter}`);
   }
@@ -1056,7 +1128,9 @@ function resetCountdown(window: QuotaWindow, generatedAtMs: number): string {
   if (window.resetsAt !== undefined) {
     const resetMs = Date.parse(window.resetsAt);
     if (Number.isFinite(resetMs) && Number.isFinite(generatedAtMs)) {
-      return formatCountdown((resetMs - generatedAtMs) / 1000);
+      return resetMs <= generatedAtMs
+        ? "ended"
+        : formatCountdown((resetMs - generatedAtMs) / 1000);
     }
   }
   return window.resetText === undefined ? "" : truncate(window.resetText, 6);
