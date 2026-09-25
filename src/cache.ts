@@ -355,17 +355,20 @@ export function readCachedCodexProvider(
   accountKey: string | undefined,
   accountIds: readonly string[],
 ): ProviderQuota | undefined {
-  const record =
-    readCachedRecord("codex", accountKey) ??
-    (accountKey === "codex-home"
-      ? readCachedRecord("codex", undefined)
-      : undefined);
-  if (!record) return undefined;
-  const contextId = record.credentialContextId;
-  if (!contextId || accountIds.length === 0) return undefined;
-  return accountIds.some((id) => codexAccountContextId(id) === contextId)
-    ? record.snapshot
-    : undefined;
+  if (accountIds.length === 0) return undefined;
+  const records = [
+    readCachedRecord("codex", accountKey),
+    ...(accountKey === "codex-home"
+      ? [readCachedRecord("codex", undefined)]
+      : []),
+  ];
+  return records.find(
+    (record) =>
+      record?.credentialContextId !== undefined &&
+      accountIds.some(
+        (id) => codexAccountContextId(id) === record.credentialContextId,
+      ),
+  )?.snapshot;
 }
 
 /**

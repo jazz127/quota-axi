@@ -76,6 +76,20 @@ describe("quota cache", () => {
     });
   });
 
+  it("continues from a mismatched Codex home snapshot to a matching keyless snapshot", () => {
+    useTempCache();
+    const foreignHome = quota("codex", 10);
+    foreignHome.accountKey = "codex-home";
+    stampCodexStoredAccountId(foreignHome, "acct-foreign");
+    const signedIn = quota("codex", 80);
+    stampCodexStoredAccountId(signedIn, "acct-signed-in");
+    writeCachedProviders([foreignHome, signedIn]);
+
+    expect(
+      readCachedCodexProvider("codex-home", ["acct-signed-in"]),
+    ).toMatchObject({ windows: [{ percentUsed: 80 }] });
+  });
+
   it("retires only Codex snapshots stamped for rejected accounts", () => {
     useTempCache();
     const defaultA = quota("codex", 10);

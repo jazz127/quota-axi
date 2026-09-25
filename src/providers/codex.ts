@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import {
   retireCodexAccount,
+  retireCachedSlot,
   readCachedCodexProvider,
   readCachedProvider,
   stampCodexStoredAccountId,
@@ -406,6 +407,12 @@ async function fetchCliAccountQuota(): Promise<ProviderQuota | undefined> {
     ]);
   } catch (error) {
     if (error instanceof CodexCliSignedOutError) {
+      try {
+        retireCachedSlot("codex");
+        retireCachedSlot("codex", CODEX_HOME_ACCOUNT_KEY);
+      } catch {
+        // Preserve the confirmed sign-out result if cache retirement fails.
+      }
       return undefined;
     }
     if (
