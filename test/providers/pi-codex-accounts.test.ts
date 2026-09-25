@@ -908,15 +908,20 @@ describe("Codex Pi sibling account lanes", () => {
     expect(signedOut.map((report) => report.accountKey)).toEqual([
       "openai-codex-work",
     ]);
+    const { readCachedProvider } = await import("../../src/cache.js");
+    expect(readCachedProvider("codex", "codex-home")).toBeDefined();
 
     mockCodexCli("unreachable");
     const unreachable = await readCodexLanes();
     expect(unreachable.map((report) => report.accountKey)).toEqual([
+      "codex-home",
       "openai-codex-work",
     ]);
     expect(
       unreachable.some((report) => report.windows[0]?.percentUsed === 42),
     ).toBe(false);
+    expect(unreachable[0]?.windows).toEqual([]);
+    expect(readCachedProvider("codex", "codex-home")).toBeDefined();
   });
 
   it("never revives a cached CLI account after it coalesces into a Pi lane", async () => {

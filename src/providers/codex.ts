@@ -421,7 +421,6 @@ async function fetchCliAccountQuota(): Promise<ProviderQuota | undefined> {
     ]);
   } catch (error) {
     if (error instanceof CodexCliSignedOutError) {
-      retireCodexHomeSnapshot();
       return undefined;
     }
     if (
