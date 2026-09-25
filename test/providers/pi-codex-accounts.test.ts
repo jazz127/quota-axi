@@ -779,9 +779,9 @@ describe("Codex Pi sibling account lanes", () => {
     });
 
     const { readCachedCodexProvider } = await import("../../src/cache.js");
-    expect(readCachedCodexProvider("codex-home", ["acct-cli"])).toMatchObject(
-      { windows: [{ percentUsed: 15 }] },
-    );
+    expect(readCachedCodexProvider("codex-home", ["acct-cli"])).toMatchObject({
+      windows: [{ percentUsed: 15 }],
+    });
     expect(
       readCachedCodexProvider("codex-home", ["acct-other"]),
     ).toBeUndefined();
