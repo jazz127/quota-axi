@@ -318,7 +318,7 @@ describe("Codex credential-state reporting", () => {
         error: "Codex sign-in required",
       });
       expect(result.windows).toEqual([]);
-      expect(readCachedProvider("codex")).toBeUndefined();
+      expect(readCachedProvider("codex")).toBeDefined();
     },
   );
 
@@ -416,7 +416,7 @@ describe("Codex credential-state reporting", () => {
       error: "Codex sign-in required",
     });
     expect(signedOut.windows).toEqual([]);
-    expect(readCachedProvider("codex")).toBeUndefined();
+    expect(readCachedProvider("codex")).toBeDefined();
 
     writeAuth({
       tokens: { access_token: jwt({ exp: 1 }), account_id: "acct-fixture" },

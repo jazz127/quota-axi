@@ -595,7 +595,8 @@ export function retireCodexAccount(
     const remaining = existing.filter(
       (item) =>
         item.snapshot.provider !== "codex" ||
-        ((item.snapshot.accountKey ?? DEFAULT_ACCOUNT_KEY) !== slot &&
+        ((accountKey === undefined ||
+          (item.snapshot.accountKey ?? DEFAULT_ACCOUNT_KEY) !== slot) &&
           !(
             item.credentialContextId && contextIds.has(item.credentialContextId)
           )),
