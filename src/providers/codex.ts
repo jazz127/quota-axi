@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import {
-  deleteCachedProvider,
   retireCodexAccount,
   readCachedCodexProvider,
   readCachedProvider,
@@ -362,12 +361,6 @@ async function discoverCodexAccounts(
             continue;
           }
           lane.nativeAccountKeys = accountKeys;
-          if (
-            reading.state.status === "fresh" ||
-            piReading.state.status === "fresh"
-          ) {
-            retireCodexHomeSnapshot();
-          }
           return undefined;
         }
         return { ...reading, accountKeys };
@@ -404,14 +397,6 @@ function laneIdentity(
   return reading.state.status === "fresh"
     ? (reading.account?.accountId ?? storedAccountId)
     : storedAccountId;
-}
-
-function retireCodexHomeSnapshot(): void {
-  try {
-    deleteCachedProvider("codex", CODEX_HOME_ACCOUNT_KEY);
-  } catch {
-    return;
-  }
 }
 
 async function fetchCliAccountQuota(): Promise<ProviderQuota | undefined> {

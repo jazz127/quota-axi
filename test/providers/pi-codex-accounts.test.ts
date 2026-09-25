@@ -615,6 +615,55 @@ describe("Codex Pi sibling account lanes", () => {
     expect(tui).not.toContain("account codex-home");
   });
 
+  it("preserves another account's default snapshot when lanes coalesce", async () => {
+    const {
+      readCachedProvider,
+      stampCodexStoredAccountId,
+      writeCachedProviders,
+    } = await import("../../src/cache.js");
+    const other = {
+      provider: "codex" as const,
+      label: "Codex",
+      source: "oauth" as const,
+      windows: [
+        {
+          id: "weekly",
+          label: "week",
+          kind: "weekly" as const,
+          percentUsed: 70,
+          windowSeconds: 604_800,
+        },
+      ],
+      state: {
+        status: "fresh" as const,
+        stale: false,
+        refreshedAt: new Date().toISOString(),
+        sourcesTried: ["oauth"],
+      },
+    };
+    stampCodexStoredAccountId(other, "acct-other");
+    writeCachedProviders([other]);
+
+    writeNativeAuth("native-access-token", "acct-same");
+    writePiAuth({
+      "openai-codex-work": piOauthEntry({
+        access: "work-access-token",
+        accountId: "acct-same",
+      }),
+    });
+    stubUsageByToken({
+      "native-access-token": usage(20, "same@example.invalid", "acct-same"),
+      "work-access-token": usage(20, "same@example.invalid", "acct-same"),
+    });
+
+    const reports = await cacheCodexRead();
+    expect(reports).toHaveLength(1);
+    expect(reports[0]?.accountKey).toBe("openai-codex-work");
+    expect(readCachedProvider("codex")).toMatchObject({
+      windows: [{ percentUsed: 70 }],
+    });
+  });
+
   it("shows the live Pi sibling when the same account's native login is rejected", async () => {
     process.env.QUOTA_AXI_CODEX_BINARY = join(tempDir!, "missing-codex");
     writeNativeAuth("rejected-native-access-token", "acct-same");
@@ -945,11 +994,13 @@ describe("Codex Pi sibling account lanes", () => {
     mockCodexCli("unreachable");
     const unreachable = await readCodexLanes();
     expect(unreachable.map((report) => report.accountKey)).toEqual([
+      "codex-home",
       "openai-codex-work",
     ]);
     expect(
       unreachable.some((report) => report.windows[0]?.percentUsed === 42),
     ).toBe(false);
+    expect(unreachable[0]?.windows).toEqual([]);
   });
 
   it("reports every lane unchanged when retiring the CLI snapshot fails", async () => {
