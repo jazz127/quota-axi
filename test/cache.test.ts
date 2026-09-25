@@ -13,11 +13,13 @@ import {
   deleteCachedProvider,
   readCachedClaudeProvider,
   readCachedCommandCodeProvider,
+  readCachedCodexProvider,
   readCachedKimiProvider,
   readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedProvider,
   writeCachedProviders,
+  stampCodexStoredAccountId,
 } from "../src/cache.js";
 import { annotateQuotaAdvice } from "../src/advice.js";
 import { cacheFilePath, claudeCredentialContextId } from "../src/lib/fs.js";
@@ -58,6 +60,30 @@ afterEach(() => {
 });
 
 describe("quota cache", () => {
+  it("serves Codex stale quota only for a matching stored account", () => {
+    useTempCache();
+    const snapshot = quota("codex", 42);
+    stampCodexStoredAccountId(snapshot, "acct-signed-in");
+    writeCachedProviders([snapshot]);
+
+    expect(readCachedCodexProvider(undefined, [])).toBeUndefined();
+    expect(readCachedCodexProvider(undefined, ["acct-other"])).toBeUndefined();
+    expect(
+      readCachedCodexProvider(undefined, ["acct-signed-in"]),
+    ).toMatchObject({
+      windows: [{ percentUsed: 42 }],
+    });
+  });
+
+  it("withholds legacy Codex snapshots without account context", () => {
+    useTempCache();
+    writeCachedProviders([quota("codex", 42)]);
+
+    expect(
+      readCachedCodexProvider(undefined, ["acct-signed-in"]),
+    ).toBeUndefined();
+  });
+
   it.each([true, false])(
     "leaves persistent snapshots untouched by native Claude reads with windows %s",
     (hasWindows) => {

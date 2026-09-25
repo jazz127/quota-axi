@@ -323,9 +323,14 @@ describe("Codex credential-state reporting", () => {
   );
 
   it("keeps the stale snapshot when a Pi entry is rejected and the Codex CLI's own login cannot read its limits", async () => {
-    const { writeCachedProviders, readCachedProvider } =
-      await import("../../src/cache.js");
-    writeCachedProviders([cachedCodexSnapshot()]);
+    const {
+      stampCodexStoredAccountId,
+      writeCachedProviders,
+      readCachedProvider,
+    } = await import("../../src/cache.js");
+    const snapshot = cachedCodexSnapshot();
+    stampCodexStoredAccountId(snapshot, "acct-pi-fixture");
+    writeCachedProviders([snapshot]);
     writePiAuth(piOauthEntry());
     vi.stubGlobal(
       "fetch",
@@ -355,9 +360,8 @@ describe("Codex credential-state reporting", () => {
     expect(readCachedProvider("codex")).toBeDefined();
   });
 
-  it("keeps the cached snapshot when the present auth.json cannot be parsed", async () => {
-    const { writeCachedProviders, readCachedProvider } =
-      await import("../../src/cache.js");
+  it("withholds cached quota when the present auth.json cannot name an account", async () => {
+    const { writeCachedProviders } = await import("../../src/cache.js");
     writeCachedProviders([cachedCodexSnapshot()]);
     writeAuth("{malformed");
 
@@ -367,14 +371,17 @@ describe("Codex credential-state reporting", () => {
       refreshCredentials: false,
     });
 
-    expect(result.state.status).toBe("stale");
-    expect(result.windows).toHaveLength(1);
-    expect(readCachedProvider("codex")).toBeDefined();
+    expect(result.state.stale).toBe(false);
+    expect(result.windows).toEqual([]);
   });
 
   it("retires a cached snapshot on sign-out and keeps it for soft expiry or a transient probe", async () => {
-    const { writeCachedProviders, readCachedProvider, deleteCachedProvider } =
-      await import("../../src/cache.js");
+    const {
+      stampCodexStoredAccountId,
+      writeCachedProviders,
+      readCachedProvider,
+      deleteCachedProvider,
+    } = await import("../../src/cache.js");
     const snapshot = {
       provider: "codex" as const,
       label: "Codex",
@@ -396,6 +403,7 @@ describe("Codex credential-state reporting", () => {
         sourcesTried: ["oauth"],
       },
     };
+    stampCodexStoredAccountId(snapshot, "acct-fixture");
     writeCachedProviders([snapshot]);
     const { fetchQuota } = await import("../../src/providers/codex.js");
     const signedOut = await fetchQuota({
@@ -410,7 +418,9 @@ describe("Codex credential-state reporting", () => {
     expect(signedOut.windows).toEqual([]);
     expect(readCachedProvider("codex")).toBeUndefined();
 
-    writeAuth({ tokens: { access_token: jwt({ exp: 1 }) } });
+    writeAuth({
+      tokens: { access_token: jwt({ exp: 1 }), account_id: "acct-fixture" },
+    });
     writeCachedProviders([snapshot]);
     vi.stubGlobal(
       "fetch",
@@ -437,7 +447,11 @@ describe("Codex credential-state reporting", () => {
     });
 
     writeAuth({
-      tokens: { access_token: jwt({ exp: 1 }), refresh_token: "refresh" },
+      tokens: {
+        access_token: jwt({ exp: 1 }),
+        refresh_token: "refresh",
+        account_id: "acct-fixture",
+      },
     });
     writeCachedProviders([snapshot]);
     const softExpired = await fetchQuota({
@@ -462,7 +476,9 @@ describe("Codex credential-state reporting", () => {
       authStatus: "expired_refreshable",
     });
 
-    writeAuth({ tokens: { access_token: jwt({ exp: 1 }) } });
+    writeAuth({
+      tokens: { access_token: jwt({ exp: 1 }), account_id: "acct-fixture" },
+    });
     writeCachedProviders([snapshot]);
     vi.stubGlobal(
       "fetch",

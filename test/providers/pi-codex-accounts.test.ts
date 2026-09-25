@@ -11,7 +11,7 @@ import {
 } from "../../src/providers/accounts.js";
 import { quotaJsonReport, renderQuotaToon } from "../../src/render.js";
 import { renderQuotaTui } from "../../src/tui.js";
-import type { ProviderOptions } from "../../src/types.js";
+import type { ProviderOptions, ProviderQuota } from "../../src/types.js";
 
 const originalCodexHome = process.env.CODEX_HOME;
 const originalCodexBinary = process.env.QUOTA_AXI_CODEX_BINARY;
@@ -807,7 +807,32 @@ describe("Codex Pi sibling account lanes", () => {
     expect(reports[0]?.account?.accountId).toBeUndefined();
   });
 
-  it("keeps an established CLI lane stale when its probe cannot be reached", async () => {
+  it("does not show a signed-in home's cached quota after that home loses its login", async () => {
+    writeNativeAuth("native-access-token", "acct-personal");
+    stubUsageByToken({
+      "native-access-token": usage(
+        36,
+        "personal@example.invalid",
+        "acct-personal",
+      ),
+    });
+    const first = await cacheCodexRead();
+    expect(first[0]).toMatchObject({
+      windows: [{ percentUsed: 36 }],
+      state: { status: "fresh" },
+    });
+
+    rmSync(join(process.env.CODEX_HOME!, "auth.json"));
+    mockCodexCli("unreachable");
+    const second = await readCodexLanes();
+    expect(second).toHaveLength(1);
+    expect(second[0]).toMatchObject({
+      windows: [],
+      state: { status: "unavailable", stale: false },
+    });
+  });
+
+  it("reports an unidentified CLI lane unavailable when its probe cannot be reached", async () => {
     const { writeCachedProviders } = await import("../../src/cache.js");
     writeCachedProviders([
       {
@@ -854,9 +879,16 @@ describe("Codex Pi sibling account lanes", () => {
       "openai-codex-work",
     ]);
     expect(reports[0]).toMatchObject({
-      windows: [{ percentUsed: 42 }],
-      state: { status: "stale", stale: true },
+      windows: [],
+      state: { status: "unavailable", stale: false },
     });
+    expect(reports[0]?.state.error).toBeTruthy();
+    expect(reports[0]?.state.sourcesTried).toContain("cli-rpc");
+    expect(reports[0]?.attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "cli-rpc", status: "failed" }),
+      ]),
+    );
   });
 
   it("never revives a cached CLI account after a confirmed logout", async () => {
@@ -1201,31 +1233,32 @@ describe("Codex Pi sibling account lanes", () => {
   });
 
   it("does not serve one account's cached windows as another's stale fallback", async () => {
-    const { writeCachedProviders } = await import("../../src/cache.js");
-    writeCachedProviders([
-      {
-        provider: "codex",
-        accountKey: "openai-codex",
-        label: "Codex",
-        source: "pi:openai-codex",
-        windows: [
-          {
-            id: "weekly",
-            label: "week",
-            kind: "weekly",
-            percentUsed: 20,
-            windowSeconds: 604_800,
-          },
-        ],
-        state: {
-          status: "fresh",
-          stale: false,
-          // A resetless window is aged from here, so it must be recent.
-          refreshedAt: new Date().toISOString(),
-          sourcesTried: ["pi:openai-codex"],
+    const { stampCodexStoredAccountId, writeCachedProviders } =
+      await import("../../src/cache.js");
+    const personalSnapshot = {
+      provider: "codex",
+      accountKey: "openai-codex",
+      label: "Codex",
+      source: "pi:openai-codex",
+      windows: [
+        {
+          id: "weekly",
+          label: "week",
+          kind: "weekly",
+          percentUsed: 20,
+          windowSeconds: 604_800,
         },
+      ],
+      state: {
+        status: "fresh",
+        stale: false,
+        // A resetless window is aged from here, so it must be recent.
+        refreshedAt: new Date().toISOString(),
+        sourcesTried: ["pi:openai-codex"],
       },
-    ]);
+    } satisfies ProviderQuota;
+    stampCodexStoredAccountId(personalSnapshot, "acct-personal");
+    writeCachedProviders([personalSnapshot]);
     writePiAuth({
       "openai-codex": piOauthEntry({
         access: "personal-access-token",

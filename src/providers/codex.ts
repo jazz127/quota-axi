@@ -883,7 +883,7 @@ function codexSuccessReport(
 
 /**
  * `accountIds` names the ChatGPT accounts the credentials this reading tried
- * still store, so a snapshot stamped for another stored identity is not served
+ * still store, so a snapshot without a matching stored identity is not served
  * back as this account's stale windows. `credentialKey` is the key of the
  * credential this failed reading speaks for; a stale reading instead names the
  * key of the credential that produced its cached snapshot.
@@ -919,15 +919,28 @@ function codexFailureReport(
       accountKeys: [codexCredentialKey(cached?.source) ?? credentialKey],
     };
   }
+  const failureStatus = retryAfter
+    ? "rate_limited"
+    : softExpiry
+      ? "unavailable"
+      : statusFromError(error);
+  // A failed CLI read after only absent local stores names no ChatGPT seat.
+  // Keep credential failures and transient OAuth failures at their own status.
+  const noLocalLogin =
+    source === undefined &&
+    accountIds.length === 0 &&
+    attempts.every(
+      (attempt) =>
+        attempt.source === "cli-rpc" ||
+        (attempt.status === "skipped" &&
+          attempt.error === "credentials_missing"),
+    );
   const report = failedProvider({
     provider: "codex",
     label: "Codex",
     ...(source ? { source } : {}),
-    status: retryAfter
-      ? "rate_limited"
-      : softExpiry
-        ? "unavailable"
-        : statusFromError(error),
+    status:
+      noLocalLogin && failureStatus === "error" ? "unavailable" : failureStatus,
     error,
     retryAfter,
     sourcesTried: sourceNames(attempts),

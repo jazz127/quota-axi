@@ -72,8 +72,8 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
  * such context says nothing about another, so each is stamped on write and
  * checked on stale reuse - strictly for Claude, Kimi, Command Code, MiniMax,
  * ElevenLabs, and Devin, whose identity a reading always has (and which skip
- * write and clear when that identity is missing), and on proven mismatch for Codex,
- * whose stored account id is optional.
+ * write and clear when that identity is missing). Codex can write an unstamped
+ * snapshot, but stale reuse requires a matching stored account id.
  *
  * How that stamp is obtained is not the same question for each. A Claude
  * profile is fixed by this process's own environment, so deriving it here reads
@@ -339,8 +339,8 @@ function readCachedRecord(
 }
 
 /**
- * Codex stale quota, withheld when the snapshot was stamped with a stored
- * ChatGPT account id none of the failed reading's tried credentials name. A
+ * Codex stale quota, served only when the snapshot's stored ChatGPT account id
+ * matches a credential the failed reading tried. A
  * Codex slot is not tied to one account by its name: the keyless slot is shared
  * by a sole discovered lane and the single-account path, and a stable Pi entry
  * key can be signed in to a different account, so the slot alone cannot say
@@ -349,7 +349,7 @@ function readCachedRecord(
  * The stamp is the stored id, not the vendor response id: those can differ
  * while the same token is live, and a later failed probe only has the store.
  * An unstamped snapshot, or a reading whose tried credentials name no account,
- * proves nothing either way and is served as before.
+ * cannot establish ownership and is withheld from stale fallback.
  */
 export function readCachedCodexProvider(
   accountKey: string | undefined,
@@ -358,7 +358,7 @@ export function readCachedCodexProvider(
   const record = readCachedRecord("codex", accountKey);
   if (!record) return undefined;
   const contextId = record.credentialContextId;
-  if (!contextId || accountIds.length === 0) return record.snapshot;
+  if (!contextId || accountIds.length === 0) return undefined;
   return accountIds.some((id) => codexAccountContextId(id) === contextId)
     ? record.snapshot
     : undefined;
@@ -693,8 +693,8 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
   if (!snapshot) return undefined;
   const contextId = CONTEXT_SCOPED_PROVIDERS[provider.provider]?.(provider);
   // Claude, Kimi, Command Code, MiniMax, ElevenLabs, and Devin require a published
-  // identity; Codex stamps are optional and withheld only on proven mismatch
-  // at read time.
+  // identity; Codex stamps are optional at write time, but an unstamped
+  // snapshot cannot be served as stale.
   if (
     provider.provider !== "codex" &&
     CONTEXT_SCOPED_PROVIDERS[provider.provider] &&
