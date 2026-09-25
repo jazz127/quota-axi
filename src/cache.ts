@@ -127,6 +127,14 @@ export function stampCodexStoredAccountId(
     (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID] = accountId;
 }
 
+export function copyCodexStoredAccountId(
+  from: ProviderQuota,
+  to: ProviderQuota,
+): void {
+  const accountId = (from as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID];
+  if (accountId) stampCodexStoredAccountId(to, accountId);
+}
+
 function codexStampContextId(provider: ProviderQuota): string | undefined {
   return codexAccountContextId(
     (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID],
@@ -355,7 +363,11 @@ export function readCachedCodexProvider(
   accountKey: string | undefined,
   accountIds: readonly string[],
 ): ProviderQuota | undefined {
-  const record = readCachedRecord("codex", accountKey);
+  const record =
+    readCachedRecord("codex", accountKey) ??
+    (accountKey === "codex-home"
+      ? readCachedRecord("codex", undefined)
+      : undefined);
   if (!record) return undefined;
   const contextId = record.credentialContextId;
   if (!contextId || accountIds.length === 0) return undefined;
