@@ -924,23 +924,16 @@ function codexFailureReport(
     : softExpiry
       ? "unavailable"
       : statusFromError(error);
-  // A failed CLI read after only absent local stores names no ChatGPT seat.
-  // Keep credential failures and transient OAuth failures at their own status.
-  const noLocalLogin =
-    source === undefined &&
-    accountIds.length === 0 &&
-    attempts.every(
-      (attempt) =>
-        attempt.source === "cli-rpc" ||
-        (attempt.status === "skipped" &&
-          attempt.error === "credentials_missing"),
-    );
+  // A generic failure whose tried credentials store no ChatGPT account id names
+  // no seat, so it is unmeasured rather than an error of any one account.
+  // Credential verdicts and rate limits keep their own status.
+  const unidentified = accountIds.length === 0;
   const report = failedProvider({
     provider: "codex",
     label: "Codex",
     ...(source ? { source } : {}),
     status:
-      noLocalLogin && failureStatus === "error" ? "unavailable" : failureStatus,
+      unidentified && failureStatus === "error" ? "unavailable" : failureStatus,
     error,
     retryAfter,
     sourcesTried: sourceNames(attempts),
