@@ -1149,6 +1149,50 @@ describe("Codex Pi sibling account lanes", () => {
     });
   });
 
+  it("preserves a Pi-only keyless cache through CLI sign-out for later Pi fallback", async () => {
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "personal-access-token",
+        accountId: "acct-personal",
+      }),
+    });
+    stubUsageByToken({
+      "personal-access-token": usage(
+        20,
+        "personal@example.invalid",
+        "acct-personal",
+      ),
+    });
+    await cacheCodexRead();
+
+    writePiAuth({
+      "openai-codex-work": piOauthEntry({
+        access: "personal-access-token",
+        accountId: "acct-personal",
+      }),
+    });
+    stubUsageByToken({
+      "personal-access-token": new Response("unavailable", { status: 503 }),
+    });
+    mockCodexCli("signed-out");
+
+    await readCodexLanes();
+    const { readCachedProvider } = await import("../../src/cache.js");
+    expect(readCachedProvider("codex")).toBeDefined();
+
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "personal-access-token",
+        accountId: "acct-personal",
+      }),
+    });
+    const [fallback] = await readCodexLanes();
+    expect(fallback).toMatchObject({
+      windows: [{ percentUsed: 20 }],
+      state: { status: "stale", stale: true },
+    });
+  });
+
   it("coalesces a CLI login with the fresh Pi lane for the same account", async () => {
     writePiAuth({
       "openai-codex": piOauthEntry({
