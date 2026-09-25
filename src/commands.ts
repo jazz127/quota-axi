@@ -19,7 +19,10 @@ import { withInputTrace } from "./lib/input-trace.js";
 import { withQuotaSemantics } from "./interpretation.js";
 import { createModelsResponse, MODEL_CATALOG_PROVIDER_IDS } from "./models.js";
 import { providerPresence } from "./lib/source-attempts.js";
-import { readTuiShowPreference } from "./lib/user-config.js";
+import {
+  readResetPredictionSources,
+  readTuiShowPreference,
+} from "./lib/user-config.js";
 import { nowIso } from "./lib/time.js";
 import {
   fetchAccountQuotas,
@@ -34,7 +37,12 @@ import {
   renderModelsToon,
   renderQuotaToon,
 } from "./render.js";
-import { formatInterval, runLiveTui, type LiveTuiIo } from "./tui-live.js";
+import {
+  formatInterval,
+  runLiveTui,
+  type LiveTuiIo,
+  type LoadTrigger,
+} from "./tui-live.js";
 import {
   detectTuiColorDepth,
   renderQuotaTui,
@@ -42,6 +50,11 @@ import {
   type TuiColorDepth,
 } from "./tui.js";
 import { scrollHint } from "./tui-viewport.js";
+import {
+  fetchResetPredictions,
+  type ResetPredictionAggregate,
+  type ResetPredictionSource,
+} from "./reset-predictions.js";
 import type {
   AuthProviderReport,
   ProviderId,
@@ -64,6 +77,7 @@ export async function quotaCommand(
   const flags = parseFlags(args);
   validateProfileOnly(flags);
   validateClaudeInference(flags);
+  const resetSources = readResetPredictionSources();
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.profileOnly ? false : flags.allowKeychainPrompt,
     refreshCredentials: flags.profileOnly ? false : !flags.noCredentialRefresh,
@@ -73,7 +87,8 @@ export async function quotaCommand(
 
   const maxAgeSeconds = flags.profileOnly ? 0 : readMaxAge(flags);
 
-  if (flags.tui) return quotaTuiReport(flags, options, maxAgeSeconds);
+  if (flags.tui)
+    return quotaTuiReport(flags, options, maxAgeSeconds, resetSources);
 
   const response = await loadQuota(
     flags.providers,
@@ -96,6 +111,11 @@ export async function quotaCommand(
       2,
     );
   }
+  const resetPrediction = await loadResetPrediction(
+    flags.providers,
+    options,
+    resetSources,
+  );
   return renderQuotaToon(
     redactedResponse(response, flags.full),
     binPath,
@@ -103,7 +123,22 @@ export async function quotaCommand(
     flags.full || flags.explicitProviders
       ? []
       : omittedAbsentProviderIds(response.providers, laneAbsent),
+    resetPrediction,
   );
+}
+
+function loadResetPrediction(
+  providers: readonly ProviderId[],
+  options: ProviderOptions,
+  sources: readonly ResetPredictionSource[],
+): Promise<ResetPredictionAggregate | undefined> {
+  if (
+    sources.length === 0 ||
+    !providers.includes("codex") ||
+    options.credentialMode === "profile-only"
+  )
+    return Promise.resolve(undefined);
+  return fetchResetPredictions(sources);
 }
 
 /**
@@ -137,6 +172,7 @@ async function quotaTuiReport(
   flags: QuotaFlags,
   options: ProviderOptions,
   maxAgeSeconds: number,
+  resetSources: readonly ResetPredictionSource[],
 ): Promise<string> {
   // A human display preference, so it is read only on this path: TOON and
   // JSON never see it.
@@ -151,54 +187,65 @@ async function quotaTuiReport(
   // providers that are not set up fold into one line until `a` or --all.
   let showNotSetUp = flags.all || flags.explicitProviders;
   let notSetUp = 0;
-  const frame = (response: QuotaAxiResponse): string => {
+  const refreshSeconds = flags.refreshSeconds ?? DEFAULT_REFRESH_SECONDS;
+  const tickMaxAgeSeconds =
+    flags.maxAgeSeconds === undefined
+      ? Math.min(maxAgeSeconds, refreshSeconds - 1)
+      : maxAgeSeconds;
+  type TuiFrame = {
+    response: QuotaAxiResponse;
+    resetPrediction?: ResetPredictionAggregate;
+  };
+  const load = async (trigger: LoadTrigger): Promise<TuiFrame> => {
+    const response = await loadQuota(
+      flags.providers,
+      options,
+      trigger !== "start",
+      trigger === "refresh"
+        ? 0
+        : trigger === "tick"
+          ? tickMaxAgeSeconds
+          : maxAgeSeconds,
+    );
+    const resetPrediction = await loadResetPrediction(
+      flags.providers,
+      options,
+      resetSources,
+    );
+    return { response, ...(resetPrediction ? { resetPrediction } : {}) };
+  };
+  const frame = ({ response, resetPrediction }: TuiFrame): string => {
     // Presence reads the source attempts, which redaction removes, so it is
     // derived from the complete model before the renderer sees the report.
     const presence = response.providers.map((provider) =>
       providerPresence(provider, PROVIDERS[provider.provider]),
     );
-    notSetUp = presence.filter((entry) => entry === "absent").length;
+    notSetUp = presence.filter(
+      (entry, index) =>
+        entry === "absent" &&
+        !(resetPrediction && response.providers[index]?.provider === "codex"),
+    ).length;
     return renderQuotaTui(redactedResponse(response, flags.full), {
       ...terminal(),
       full: flags.full,
       presence,
       showNotSetUp,
       show,
+      resetPrediction,
     });
   };
 
   if (flags.once || !isInteractiveTerminal()) {
-    return frame(
-      await loadQuota(flags.providers, options, false, maxAgeSeconds),
-    );
+    return frame(await load("start"));
   }
 
-  const refreshSeconds = flags.refreshSeconds ?? DEFAULT_REFRESH_SECONDS;
   const refreshing = `refreshing every ${formatInterval(refreshSeconds)}`;
   const keyHints = (): string[] =>
     flags.explicitProviders || notSetUp === 0
       ? []
       : [`a ${showNotSetUp ? "hide" : "show"} not set up`];
-  // A scheduled frame never reuses the loop's own previous frame, which is a
-  // full interval old, unless --max-age explicitly allows it; a newer reading
-  // from another process still answers.
-  const tickMaxAgeSeconds =
-    flags.maxAgeSeconds === undefined
-      ? Math.min(maxAgeSeconds, refreshSeconds - 1)
-      : maxAgeSeconds;
-  const last = await runLiveTui<QuotaAxiResponse>({
-    // `r` is an operator asking for a new reading now, so it never reuses
-    load: (trigger) =>
-      loadQuota(
-        flags.providers,
-        options,
-        true,
-        trigger === "refresh"
-          ? 0
-          : trigger === "tick"
-            ? tickMaxAgeSeconds
-            : maxAgeSeconds,
-      ),
+  const last = await runLiveTui<TuiFrame>({
+    load,
     render: frame,
     status: (scroll) =>
       renderTuiHintLine(

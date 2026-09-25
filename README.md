@@ -447,6 +447,38 @@ QUOTA_AXI_SNAPSHOT=test/fixtures/quota.json quota-axi --json
 - Width comes from the terminal, clamped to 80-120 columns; below the two-up width the grid reflows to one column. Color honors `NO_COLOR`, `TERM=dumb`, and non-TTY stdout (the glyph skeleton is kept), re-enables with `FORCE_COLOR`, and uses truecolor when `COLORTERM` advertises it, falling back to 256-color then ANSI-16.
 - `--tui` composes with `--provider` scoping, `--all`, and `--full` (account identity and source-attempt footers, including for folded providers). It is mutually exclusive with `--json` and only supported by the `quota` command; `--all` is only supported with `--tui`.
 
+### Optional Codex reset predictions (house feature)
+
+To show an unofficial forecast of an **extra Codex reset event within 24 hours**, select sources in the existing user config file, `~/.config/quota-axi/config.json` (or `$XDG_CONFIG_HOME/quota-axi/config.json`):
+
+```json
+{
+  "codex": {
+    "resetPredictionSources": [
+      "codex-reset",
+      "lunarwerx",
+      "resetbeacon",
+      "gussuri",
+      "recodex"
+    ]
+  }
+}
+```
+
+Choose any subset, including `[]`. With no selection, quota-axi makes **no request to these third parties** and adds no prediction line. Unknown names, duplicates, and malformed selections cause a validation error. When selected, the plain TOON report adds one `attention[]` `reset_prediction` row and the Codex TUI card shows the same count and percentage. **Enabling this contacts the selected third-party sites from your machine.** `--json`, `auth`, `models`, and `--profile-only` do not contact them or include the forecast. The selected sources are read only when Codex is in the quota report. No Codex credential is sent to them.
+
+Each source publishes a probability for an extra reset in the next 24 hours. Their event definitions can include different kinds of public reset or banked-credit announcements; none can tell whether your account is eligible. quota-axi turns a source's probability of **at least 50%** into a yes vote; a lower probability is a no vote. The displayed percentage is the share of answering sources that voted yes, **not** a probability that a reset will occur. For example, `2 of 3 answering sources predict a reset (67%); 1 unavailable` means four were selected and one did not answer reliably. Network errors, rejected responses, invalid shapes, and expired forecasts are unavailable, never no votes. With no usable answer, the display says unavailable and shows no percentage. These are third-party estimates, not OpenAI facts or a guarantee; they say nothing about your personal five-hour or weekly reset. They do not change quota windows, credits, cache, or provider status. During a live TUI session, repeat reads are held to each site's documented or conservative minimum polling interval.
+
+| Source                                                                               | Public JSON endpoint                                   | What it publishes                                                    | 24h field used                        | Published update cadence                                           |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------ |
+| [Codex Reset](https://codex-reset.com/developers)                                    | `https://codex-reset.com/api/forecast`                 | 24h/48h extra-reset odds, confidence, last reset and official signal | `probabilities.rounded_24h` (percent) | About once a minute; poll at most once a minute                    |
+| [LunarWerx Codex Forecast](https://codex.lunarwerx.com/api)                          | `https://codex.lunarwerx.com/api/v1/forecast`          | 24h and near-term odds, uncertainty and accuracy record              | `next24Hours.probability` (fraction)  | Snapshot up to 5 minutes; poll at most once per 300 seconds        |
+| [Reset Beacon](https://resetbeacon.com/api/docs/)                                    | `https://resetbeacon.com/api/forecast`                 | 24h/48h extra-reset odds, evidence and publication state             | `probabilities.h24.display` (percent) | Edge may hold reads for 60 seconds; `validUntil` marks expiry      |
+| [Gussuri Observatory](https://github.com/gussuri/codex-reset-observatory#public-api) | `https://codex.gussuriworks.com/api/current?locale=en` | 12h/24h/48h/72h estimates and data health                            | `viewModel.probability24h` (fraction) | Shared calculation every 10 minutes; 10-minute polling recommended |
+| [Recodex](https://recodex.lol/about)                                                 | `https://recodex.lol/api/index`                        | Reset index, state, 24h/72h/7d estimates and factors                 | `p24` (fraction)                      | Undocumented; response carries `computed_at`                       |
+
+The [captured live fetches](docs/evidence/codex-reset-prediction-2026-09-25/capture.md) record the source responses and the command and time used to obtain them. The aggregate is intentionally kept outside the normalized quota JSON schema and the Codex quota/cache machinery.
+
 ## Multiple accounts
 
 A normal invocation reports every Codex ChatGPT subscription it can discover from sibling entries in one Pi `auth.json`.
@@ -551,6 +583,7 @@ A `quota[]` row whose `runway` is `projected_exhaustion` or `exhausted_now` has 
 | `no_quota`                                              | `all`   | The provider reported no measurable scope and no raw credit balance. Emitted when nothing else names it or when needed to preserve `state.authStatus`.                                                                            |
 | `credits`                                               | `all`   | The provider reported a raw credit balance without measurable scopes (any value), or a fresh positive/unlimited balance beside measured scopes. `detail` states that balance verbatim; no percentage or bound is derived from it. |
 | `resets_available`                                      | `all`   | Codex reported the number of banked rate-limit resets still available. The row is omitted when Codex does not report a count.                                                                                                     |
+| `reset_prediction`                                      | `all`   | Unofficial third-party estimates of an extra Codex reset in 24 hours; omitted unless selected in user config. |
 | `unresolved_windows`                                    | `all`   | `quotaSemantics.unresolvedWindowIds`: unfamiliar vendor windows not folded into any bound.                                                                                                                                        |
 | `untrusted_windows`                                     | `all`   | `state.untrustedWindowIds`: limits that could not be parsed authoritatively.                                                                                                                                                      |
 | `share`                                                 | `all`   | A window is a used-share of another window, not an independent allowance. `detail` is `<id> of <parent>` plus ` · <percentUsed>` when that figure is present. It bounds no scope.                                                 |

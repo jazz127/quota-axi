@@ -1,0 +1,18 @@
+HTTP/2 200 
+age: 0
+cache-control: public, max-age=0
+content-security-policy: default-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'
+content-type: application/json
+date: Thu, 24 Sep 2026 14:59:14 GMT
+permissions-policy: camera=(), microphone=(), geolocation=(), payment=()
+referrer-policy: strict-origin-when-cross-origin
+server: Vercel
+strict-transport-security: max-age=63072000
+vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+x-content-type-options: nosniff
+x-frame-options: DENY
+x-matched-path: /api/current
+x-robots-tag: noindex, nofollow
+x-vercel-cache: MISS
+x-vercel-id: syd1::iad1::tfqpr-1790261954206-c118e659cf18
+

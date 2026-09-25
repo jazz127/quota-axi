@@ -11,6 +11,7 @@ import type {
   QuotaAxiResponse,
   QuotaWindow,
 } from "./types.js";
+import type { ResetPredictionAggregate } from "./reset-predictions.js";
 import { creditWindowMatchesBalance } from "./render.js";
 
 /**
@@ -55,6 +56,7 @@ export type TuiOptions = {
   showNotSetUp?: boolean;
   /** Draw percentages and bars as what is left (default) or what is used. */
   show?: TuiShow;
+  resetPrediction?: ResetPredictionAggregate;
 };
 
 const CARD_WIDTH = 49;
@@ -173,9 +175,14 @@ export function renderQuotaTui(
     absent: [],
   };
   response.providers.forEach((provider, index) => {
-    tiers[options.presence?.[index] ?? providerPresence(provider)].push(
-      provider,
-    );
+    const presence = options.presence?.[index] ?? providerPresence(provider);
+    const tier =
+      presence === "absent" &&
+      provider.provider === "codex" &&
+      options.resetPrediction
+        ? "attention"
+        : presence;
+    tiers[tier].push(provider);
   });
   const { attention, absent } = tiers;
   const carded = response.providers
@@ -185,7 +192,7 @@ export function renderQuotaTui(
     })
     .concat(attention);
   const card = (provider: ProviderQuota): Card =>
-    buildCard(provider, generatedAtMs, show);
+    buildCard(provider, generatedAtMs, show, options.resetPrediction);
 
   const lines: Line[] = [];
   lines.push([
@@ -344,9 +351,10 @@ function buildCard(
   provider: ProviderQuota,
   generatedAtMs: number,
   show: TuiShow,
+  resetPrediction?: ResetPredictionAggregate,
 ): Card {
-  if (!hasReading(provider)) return buildFailedCard(provider);
-  const card = buildLiveCard(provider, generatedAtMs, show);
+  if (!hasReading(provider)) return buildFailedCard(provider, resetPrediction);
+  const card = buildLiveCard(provider, generatedAtMs, show, resetPrediction);
   return isStale(provider) ? muteStaleCard(card) : card;
 }
 
@@ -395,6 +403,7 @@ function buildLiveCard(
   provider: ProviderQuota,
   generatedAtMs: number,
   show: TuiShow,
+  resetPrediction?: ResetPredictionAggregate,
 ): Card {
   const stale = provider.state.status === "stale";
   const border: CardBorder = stale ? "borderDim" : "border";
@@ -420,6 +429,7 @@ function buildLiveCard(
       border,
     ),
     ...accountCardLines(provider, border),
+    ...resetPredictionCardLines(provider, resetPrediction, border),
     interior([], border),
   ];
 
@@ -672,7 +682,10 @@ function windowsOnlyHeadline(stale: boolean, border: CardBorder): Line[] {
   ];
 }
 
-function buildFailedCard(provider: ProviderQuota): Card {
+function buildFailedCard(
+  provider: ProviderQuota,
+  resetPrediction?: ResetPredictionAggregate,
+): Card {
   const status = provider.state.status;
   const rightTitle =
     status === "auth_required" ? "signed out" : humanize(status);
@@ -683,6 +696,7 @@ function buildFailedCard(provider: ProviderQuota): Card {
       "borderDim",
     ),
     ...accountCardLines(provider, "borderDim"),
+    ...resetPredictionCardLines(provider, resetPrediction, "borderDim"),
     interior([], "borderDim"),
   ];
   const message =
@@ -716,6 +730,64 @@ function buildFailedCard(provider: ProviderQuota): Card {
   }
   lines.push(interior([], "borderDim"));
   lines.push(bottomLine("borderDim"));
+  return lines;
+}
+
+function resetPredictionCardLines(
+  provider: ProviderQuota,
+  prediction: ResetPredictionAggregate | undefined,
+  border: "border" | "borderDim",
+): Line[] {
+  if (provider.provider !== "codex" || !prediction) return [];
+  const verdict =
+    prediction.answered === 0
+      ? `third-party reset: unavailable (0/${prediction.readings.length} answered)`
+      : `third-party reset in 24h: ${prediction.predicting}/${prediction.answered} yes (${prediction.percent}%)`;
+  const lines = [
+    interior(
+      [{ text: `   ${truncate(verdict, CARD_INTERIOR - 4)}`, style: "dim" }],
+      border,
+    ),
+    interior(
+      [
+        {
+          text: `   ${truncate(prediction.unavailable > 0 ? `${prediction.unavailable} unavailable · not account-specific` : "unofficial; not account-specific; no guarantee", CARD_INTERIOR - 4)}`,
+          style: "dimmer",
+        },
+      ],
+      border,
+    ),
+    ...(prediction.unavailable > 0
+      ? [
+          interior(
+            [{ text: "   unofficial; no guarantee", style: "dimmer" }],
+            border,
+          ),
+        ]
+      : []),
+    interior(
+      [
+        {
+          text: "   selected sites contacted from your machine",
+          style: "dimmer",
+        },
+      ],
+      border,
+    ),
+  ];
+  if (prediction.readings.some((reading) => reading.source === "codex-reset")) {
+    lines.push(
+      interior(
+        [
+          {
+            text: "Data: codex-reset.com https://codex-reset.com/",
+            style: "dimmer",
+          },
+        ],
+        border,
+      ),
+    );
+  }
   return lines;
 }
 
