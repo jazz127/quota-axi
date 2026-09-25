@@ -598,7 +598,7 @@ describe("CLI quota rendering", () => {
     // The remedy rides the stale provider's `attention[]` row, and the stale
     // scope gets no `quota[]` row at all.
     expect(output).toContain(
-      "attention[4]{provider,scope,kind,detail,remedy}:",
+      "attention[3]{provider,scope,kind,detail,remedy}:",
     );
     expect(output).toContain(
       'claude,all,stale,"last refreshed 2026-07-06T18:10:00Z · keychain_prompt_required · reason keychain_access_required",quota-axi --allow-keychain-prompt',
@@ -610,9 +610,11 @@ describe("CLI quota rendering", () => {
     expect(output).toContain(
       'Tell your user: run `quota-axi --allow-keychain-prompt` once and approve Keychain access ("Always Allow") so quota-axi can read claude\'s live quota.',
     );
-    // Codex still reports headroom; only its selection scalar is blocked.
+    // Codex still reports headroom; its only bound is an idle, not-yet-
+    // triggered session window, so the scope stays rankable-but-unmeasured
+    // (literal `unknown` spendPriority) instead of a blocked attention row.
     expect(output).toContain(
-      "codex,all_models,unmeasurable,five_hour blocks spendPriority,none",
+      "codex,all_models,100,unknown,through_reset,established,five_hour,unknown",
     );
     expect(output).not.toContain("codex,all,stale,");
   });
@@ -1171,7 +1173,9 @@ describe("CLI quota rendering", () => {
     expect(compact).toContain(
       'codex,all_models,258720,"2026-07-18T11:52:00.000Z",weekly',
     );
-    expect(compact).toContain("attention[1]{provider,scope,kind,detail,remedy}:");
+    expect(compact).toContain(
+      "attention[1]{provider,scope,kind,detail,remedy}:",
+    );
     expect(compact).not.toContain("windows[");
     expect(compact).not.toContain("worstReserve");
 
@@ -1453,7 +1457,9 @@ describe("human report folding for providers that are not set up", () => {
     ]);
     expect(output).not.toMatch(/╭─ ○ (agy|alibaba|commandcode) /);
 
-    expect(output).toMatch(/· 1 live · 1 needs attention · 15 not set up\n/);
+    expect(output).toMatch(
+      /· 1 live · 0 stale · 1 needs attention · 15 not set up\n/,
+    );
     expect(output).toContain("╭─ ● codex ");
     expect(output).toContain("╭─ ○ claude ");
     expect(output).toContain("  ○ not set up  cursor · copilot · grok · kimi");
@@ -1480,7 +1486,9 @@ describe("human report folding for providers that are not set up", () => {
       "zai,codex",
     ]);
 
-    expect(output).toMatch(/· 1 live · 0 need attention · 1 not set up\n/);
+    expect(output).toMatch(
+      /· 1 live · 0 stale · 0 need attention · 1 not set up\n/,
+    );
     expect(output).toContain("╭─ ○ zai ");
     expect(output).not.toContain("quota-axi auth shows where each is read");
   });
@@ -2033,13 +2041,11 @@ describe("default TOON decision blocks", () => {
       "1 provider not set up is omitted; run `quota-axi --full` to list it",
     );
     expect(output).not.toContain("elevenlabs");
-    expect(toonRows(output, "attention").map((row) => row[0])).toEqual(
-      [
-        ...Object.keys(PROVIDERS)
-          .filter((id) => id !== "elevenlabs")
-          .flatMap((id) => (id === "codex" ? [id, id] : [id])),
-      ],
-    );
+    expect(toonRows(output, "attention").map((row) => row[0])).toEqual([
+      ...Object.keys(PROVIDERS)
+        .filter((id) => id !== "elevenlabs")
+        .flatMap((id) => (id === "codex" ? [id, id] : [id])),
+    ]);
     expect(process.exitCode).toBeUndefined();
   });
 
