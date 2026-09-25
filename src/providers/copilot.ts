@@ -36,11 +36,13 @@ import {
 } from "./gh-cli-credential.js";
 
 import {
+  COPILOT_CLI_CONFIG_SOURCE,
   COPILOT_CLI_KEYCHAIN_PROMPT_REQUIRED,
   COPILOT_CLI_SECURE_STORE_UNSUPPORTED,
   COPILOT_CLI_SOURCE,
   COPILOT_CLI_UNCONFIRMED_ACCOUNT,
   resolveCopilotCliCredential,
+  resolveCopilotCliConfigCredential,
 } from "./copilot-cli-credential.js";
 
 const USER_URL = "https://api.github.com/copilot_internal/user";
@@ -59,13 +61,15 @@ const DECODE_FAILED = "GitHub Copilot quota response could not be decoded";
 /**
  * GitHub Copilot's credential stores in ownership-stability order. `apps.json`
  * is Copilot's legacy store and answers first exactly as it always has. Its
- * native CLI secure-store source is next. The GitHub CLI login belongs to a sibling
- * tool and answers last. Handover is for credential problems only; transport, decoding,
+ * native CLI secure-store source is next, followed by its selected plaintext
+ * fallback. The GitHub CLI login belongs to a sibling tool and answers last.
+ * Handover is for credential problems only; transport, decoding,
  * rate-limit, or server failure is about the request and stops the search.
  */
 const COPILOT_SOURCE_ORDER = [
   APPS_JSON_SOURCE,
   COPILOT_CLI_SOURCE,
+  COPILOT_CLI_CONFIG_SOURCE,
   GH_CLI_CREDENTIAL_SOURCE,
 ] as const;
 
@@ -131,6 +135,8 @@ export async function fetchQuota(
   let nativeSilent = false;
   let nativeResolved = false;
   let nativePromptRequired = false;
+  let configSilent = false;
+  let configResolved = false;
 
   for (const source of COPILOT_SOURCE_ORDER) {
     const resolution = await resolveCopilotCredential(source, options);
@@ -140,12 +146,17 @@ export async function fetchQuota(
       nativePromptRequired =
         resolution.report.error === "keychain_prompt_required";
     }
+    if (source === COPILOT_CLI_CONFIG_SOURCE) {
+      configResolved = true;
+      configSilent = resolution.silent ?? false;
+    }
     if (resolution.status !== "resolved") {
       attempts.push(unavailableAttempt(source, resolution));
       // An item awaiting consent still names an account, so it speaks for the
       // verdict (unmeasured, not signed out) without counting as degraded.
       if (
-        source === COPILOT_CLI_SOURCE &&
+        (source === COPILOT_CLI_SOURCE ||
+          source === COPILOT_CLI_CONFIG_SOURCE) &&
         (!resolution.silent ||
           resolution.report.error === "keychain_prompt_required")
       ) {
@@ -193,7 +204,10 @@ export async function fetchQuota(
       return successProvider({
         provider: "copilot",
         label: "GitHub Copilot",
-        source: source === COPILOT_CLI_SOURCE ? "cli" : "api",
+        source:
+          source === COPILOT_CLI_SOURCE || source === COPILOT_CLI_CONFIG_SOURCE
+            ? "cli"
+            : "api",
         plan: quota.plan,
         account: quota.account,
         windows: quota.windows,
@@ -208,7 +222,7 @@ export async function fetchQuota(
         source: attemptSource,
         status: "failed",
         error:
-          source === COPILOT_CLI_SOURCE
+          source === COPILOT_CLI_SOURCE || source === COPILOT_CLI_CONFIG_SOURCE
             ? "GitHub Copilot credential rejected or quota access denied"
             : SIGN_IN_REQUIRED,
       };
@@ -236,6 +250,14 @@ export async function fetchQuota(
     nativePromptRequired =
       resolution.report.error === "keychain_prompt_required";
   }
+  if (!configResolved) {
+    const resolution = await resolveCopilotCredential(
+      COPILOT_CLI_CONFIG_SOURCE,
+      options,
+      "silence",
+    );
+    configSilent = resolution.silent ?? false;
+  }
 
   const diagnostic = unavailable;
   const verdict: CopilotFailure = failure ?? {
@@ -247,7 +269,11 @@ export async function fetchQuota(
   const cached = readCachedProvider("copilot");
   const signOut = verdict.error === SIGN_IN_REQUIRED;
   const stale = staleUnlessSignOut(
-    cached && cached.source !== "cli" && nativeSilent && !nativePromptRequired
+    cached &&
+      cached.source !== "cli" &&
+      nativeSilent &&
+      configSilent &&
+      !nativePromptRequired
       ? cached
       : undefined,
     verdict.error,
@@ -323,6 +349,17 @@ async function resolveCopilotCredential(
         }
       : { ...result };
   }
+  if (source === COPILOT_CLI_CONFIG_SOURCE) {
+    const result = await resolveCopilotCliConfigCredential(presenceOnly);
+    return result.status === "resolved"
+      ? {
+          status: "resolved",
+          credentials: { oauthToken: result.token },
+          report: result.report,
+          silent: result.silent,
+        }
+      : { ...result };
+  }
   return fromGhCliResolution(await resolveGhCliCredential());
 }
 
@@ -382,7 +419,7 @@ function unavailableAttempt(
   source: CopilotSource,
   resolution: UnavailableResolution,
 ): SourceAttempt {
-  if (source === COPILOT_CLI_SOURCE) {
+  if (source === COPILOT_CLI_SOURCE || source === COPILOT_CLI_CONFIG_SOURCE) {
     // An unsupported selection or a consent gate is a structural non-answer
     // rather than a broken store; the resolver already withholds
     // `credentialPresent` where no account was selected at all.

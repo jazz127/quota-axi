@@ -8,12 +8,63 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { resolveCopilotCliCredential } from "../../src/providers/copilot-cli-credential.js";
+import {
+  resolveCopilotCliCredential,
+  resolveCopilotCliConfigCredential,
+} from "../../src/providers/copilot-cli-credential.js";
 import { copilotCliKeychainAccessMarkerPath } from "../../src/lib/fs.js";
 
 const options = { allowKeychainPrompt: true, refreshCredentials: false };
 const token = "gho_synthetic_fixture";
 const selected = { host: "https://github.com", login: "selected-user" };
+describe("Copilot CLI selected plaintext fallback", () => {
+  it("ignores another user's entry", async () => {
+    const deps = fixture({
+      lastLoggedInUser: selected,
+      copilotTokens: { "https://github.com:other-user": token },
+    });
+    const result = await resolveCopilotCliConfigCredential(false, deps);
+    expect(result).toMatchObject({ status: "absent", silent: true });
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("reports an unselected account as unconfirmed", async () => {
+    const deps = fixture({
+      loggedInUsers: [selected],
+      copilotTokens: { "https://github.com:selected-user": token },
+    });
+    const result = await resolveCopilotCliConfigCredential(false, deps);
+    expect(result.report.error).toBe("selected_account_unconfirmed");
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it("handles malformed and oversized config without a token leak", async () => {
+    const deps = fixture();
+    deps.readFile.mockResolvedValueOnce(Buffer.from("{broken"));
+    const malformed = await resolveCopilotCliConfigCredential(false, deps);
+    expect(malformed).toMatchObject({
+      status: "structurally_invalid",
+      report: { error: "credentials_invalid" },
+    });
+    deps.readFile.mockResolvedValueOnce(Buffer.alloc(1024 * 1024 + 1));
+    const oversized = await resolveCopilotCliConfigCredential(false, deps);
+    expect(oversized.report.error).toBe("config_too_large");
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("rejects an enterprise selection before reading a plaintext token", async () => {
+    const deps = fixture({
+      lastLoggedInUser: {
+        host: "https://enterprise.example",
+        login: "selected-user",
+      },
+      copilotTokens: { "https://enterprise.example:selected-user": token },
+    });
+    const result = await resolveCopilotCliConfigCredential(false, deps);
+    expect(result.report.error).toBe("selected_host_unsupported");
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+});
 function fixture(data: unknown = { lastLoggedInUser: selected }) {
   return {
     environment: {} as Record<string, string | undefined>,

@@ -12,6 +12,7 @@ import type { AuthSourceReport, ProviderOptions } from "../types.js";
 import { traceInput } from "../lib/input-trace.js";
 
 export const COPILOT_CLI_SOURCE = "copilot-cli:keychain";
+export const COPILOT_CLI_CONFIG_SOURCE = "copilot-cli:config";
 /**
  * The native source's skips that establish nothing about the account either
  * way: a configuration that names no account it can confirm, a platform
@@ -305,6 +306,10 @@ export async function resolveCopilotCliCredential(
 }
 
 function selectedIdentity(raw: Buffer): Identity | undefined {
+  return identityFromConfig(parseConfig(raw));
+}
+
+function parseConfig(raw: Buffer): Record<string, unknown> {
   // Only full-line comments are removed: an https:// host must remain intact.
   const data: unknown = JSON.parse(
     raw
@@ -315,7 +320,13 @@ function selectedIdentity(raw: Buffer): Identity | undefined {
   );
   if (!data || typeof data !== "object" || Array.isArray(data))
     throw new Error();
-  const selected = (data as Record<string, unknown>).lastLoggedInUser;
+  return data as Record<string, unknown>;
+}
+
+function identityFromConfig(
+  data: Record<string, unknown>,
+): Identity | undefined {
+  const selected = data.lastLoggedInUser;
   if (!selected || typeof selected !== "object" || Array.isArray(selected))
     return undefined;
   const { host, login } = selected as Record<string, unknown>;
@@ -328,6 +339,105 @@ function selectedIdentity(raw: Buffer): Identity | undefined {
   // No canonicalization of the lookup key: only the observed host spelling is
   // supported, even when another spelling would normalize to github.com.
   return { host, login, account: `${host}:${login}` };
+}
+
+/** Read only the exact selected public account's plaintext fallback. */
+export async function resolveCopilotCliConfigCredential(
+  presenceOnly: boolean | "silence" = false,
+  overrides: Partial<Dependencies> = {},
+): Promise<CopilotCliCredentialResolution> {
+  const deps = dependencies(overrides);
+  const defaultHome = join(deps.homeDirectory(), ".copilot");
+  const home = deps.environment.COPILOT_HOME || defaultHome;
+  const path = copilotCliConfigPath(home);
+  const unresolvedConfig = (
+    status: Exclude<CopilotCliCredentialResolution["status"], "resolved">,
+    error?: string,
+    silent = false,
+  ): CopilotCliCredentialResolution => ({
+    status,
+    silent,
+    report: {
+      source: COPILOT_CLI_CONFIG_SOURCE,
+      path,
+      status:
+        status === "absent"
+          ? "missing"
+          : status === "unsupported"
+            ? "skipped"
+            : status === "read_error"
+              ? "error"
+              : "invalid",
+      ...(error ? { error } : {}),
+      ...(status === "absent" || error === COPILOT_CLI_UNCONFIRMED_ACCOUNT
+        ? {}
+        : { credentialPresent: true }),
+    },
+  });
+  let raw: Buffer;
+  try {
+    raw = await deps.readFile(path, FILE_LIMIT);
+  } catch (error) {
+    return code(error) === "ENOENT"
+      ? unresolvedConfig("absent", undefined, true)
+      : unresolvedConfig("read_error", "file_read_error");
+  }
+  if (raw.byteLength > FILE_LIMIT)
+    return unresolvedConfig("structurally_invalid", "config_too_large");
+  let data: Record<string, unknown>;
+  try {
+    data = parseConfig(raw);
+  } catch {
+    return unresolvedConfig("structurally_invalid", "credentials_invalid");
+  }
+  const identity = identityFromConfig(data);
+  if (!identity)
+    return unresolvedConfig("unsupported", COPILOT_CLI_UNCONFIRMED_ACCOUNT);
+  if (resolve(home) !== resolve(defaultHome))
+    return unresolvedConfig("unsupported", "copilot_home_unsupported");
+  if (
+    [
+      "COPILOT_GITHUB_TOKEN",
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+      "COPILOT_GH_HOST",
+      "GH_HOST",
+    ].some((name) => (deps.environment[name] ?? "").trim() !== "")
+  )
+    return unresolvedConfig("unsupported", "environment_selection_unsupported");
+  if (identity.host !== "https://github.com")
+    return unresolvedConfig("unsupported", "selected_host_unsupported");
+  const tokens = data.copilotTokens;
+  if (tokens === undefined || tokens === null)
+    return unresolvedConfig("absent", undefined, true);
+  if (!tokens || typeof tokens !== "object" || Array.isArray(tokens))
+    return unresolvedConfig("structurally_invalid", "credentials_invalid");
+  const entries = tokens as Record<string, unknown>;
+  if (!Object.hasOwn(entries, identity.account))
+    return unresolvedConfig("absent", undefined, true);
+  if (presenceOnly === "silence")
+    return unresolvedConfig("unsupported", "value_read_deferred");
+  const value = entries[identity.account];
+  if (
+    typeof value !== "string" ||
+    value.length > TOKEN_LIMIT ||
+    !/^(?:gho_|ghu_|github_pat_)[A-Za-z0-9_]+$/.test(value)
+  )
+    return unresolvedConfig(
+      "structurally_invalid",
+      "credential_format_unsupported",
+    );
+  return {
+    status: "resolved",
+    token: value,
+    silent: false,
+    report: {
+      source: COPILOT_CLI_CONFIG_SOURCE,
+      path,
+      status: "available",
+      credentialPresent: true,
+    },
+  };
 }
 
 function code(error: unknown): unknown {

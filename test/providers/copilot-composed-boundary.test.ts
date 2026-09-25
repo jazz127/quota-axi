@@ -1,5 +1,6 @@
 import {
   mkdtempSync,
+  existsSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -35,6 +36,11 @@ vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => {
         platform: fixture.platform,
         homeDirectory: () => fixture.home,
       }),
+    resolveCopilotCliConfigCredential: (presenceOnly: boolean | "silence") =>
+      native.resolveCopilotCliConfigCredential(presenceOnly, {
+        platform: fixture.platform,
+        homeDirectory: () => fixture.home,
+      }),
   };
 });
 vi.mock("../../src/lib/process.js", () => ({ execFileText: vi.fn() }));
@@ -61,7 +67,7 @@ const oneShot = [
   "--no-credential-refresh",
 ];
 
-function select(login: string) {
+function select(login: string, copilotTokens?: Record<string, string>) {
   fixture.login = login;
   writeFileSync(
     join(fixture.home, ".copilot/config.json"),
@@ -71,6 +77,7 @@ function select(login: string) {
         host: "https://github.com",
         login: user,
       })),
+      ...(copilotTokens ? { copilotTokens } : {}),
     }),
   );
 }
@@ -141,6 +148,80 @@ afterEach(() => {
 });
 
 describe("Copilot composed credential boundaries", () => {
+  it.each(["darwin", "win32", "linux"] as const)(
+    "uses the exact selected plaintext fallback on %s without exposing or caching its token",
+    async (platform) => {
+      fixture.platform = platform;
+      select("account-a", {
+        "https://github.com:account-a": tokenA,
+        "https://github.com:account-b": tokenB,
+      });
+      if (platform === "darwin")
+        vi.mocked(execFileText).mockRejectedValue({ code: 44 });
+      const report = await fetchQuota(platform === "darwin" ? optIn : ordinary);
+      expect(report).toMatchObject({
+        source: "cli",
+        state: { status: "fresh" },
+      });
+      expect(report.attempts).toContainEqual({
+        source: "copilot-cli:config",
+        status: "success",
+      });
+      expect(providerFetch).toHaveBeenCalledWith(
+        "https://api.github.com/copilot_internal/user",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: `Bearer ${tokenA}`,
+          }),
+        }),
+      );
+      const output = await quotaCommand([
+        "--provider",
+        "copilot",
+        "--full",
+        "--json",
+        "--no-credential-refresh",
+      ]);
+      expect(output).not.toContain(tokenA);
+      expect(output).not.toContain(tokenB);
+      if (existsSync(join(fixture.home, "cache")))
+        expect(
+          JSON.stringify(storedFiles(join(fixture.home, "cache"))),
+        ).not.toContain(tokenA);
+    },
+  );
+
+  it("prefers a working native item when plaintext is also present", async () => {
+    select("account-a", { "https://github.com:account-a": tokenB });
+    const report = await fetchQuota(optIn);
+    expect(report.source).toBe("cli");
+    expect(report.attempts?.map((attempt) => attempt.source)).not.toContain(
+      "copilot-cli:config",
+    );
+    expect(providerFetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: `Bearer ${tokenA}` }),
+      }),
+    );
+  });
+
+  it("leaves an unselected plaintext account unconfirmed", async () => {
+    writeFileSync(
+      join(fixture.home, ".copilot/config.json"),
+      JSON.stringify({
+        copilotTokens: { "https://github.com:account-a": tokenA },
+      }),
+    );
+    const report = await fetchQuota(ordinary);
+    expect(report.state).toMatchObject({
+      status: "unavailable",
+      error: "selected_account_unconfirmed",
+    });
+    expect(providerFetch).not.toHaveBeenCalled();
+    expect(JSON.stringify(report)).not.toContain(tokenA);
+  });
+
   it("never serves another login's snapshot while the selected native account awaits consent", async () => {
     rmSync(join(fixture.home, ".copilot/config.json"));
     mkdirSync(join(fixture.home, "gh"));
@@ -397,6 +478,10 @@ describe("Copilot composed credential boundaries", () => {
       expect.objectContaining({
         source: "copilot-cli:keychain",
         status: "failed",
+      }),
+      expect.objectContaining({
+        source: "copilot-cli:config",
+        status: "skipped",
       }),
       { source: "gh:hosts.yml", status: "success" },
     ]);

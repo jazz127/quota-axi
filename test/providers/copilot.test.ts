@@ -441,6 +441,12 @@ describe("GitHub Copilot credential sources", () => {
         error: "credentials_missing",
         degraded: false,
       },
+      {
+        source: "copilot-cli:config",
+        status: "skipped",
+        error: "credentials_missing",
+        degraded: false,
+      },
       { source: "gh:hosts.yml", status: "success" },
     ]);
     expect(degradedSources(result.attempts)).toEqual([]);
@@ -549,6 +555,12 @@ describe("GitHub Copilot credential sources", () => {
         degraded: false,
       },
       {
+        source: "copilot-cli:config",
+        status: "skipped",
+        error: "credentials_missing",
+        degraded: false,
+      },
+      {
         source: "gh:hosts.yml",
         status: "skipped",
         error: "credentials_missing",
@@ -579,6 +591,12 @@ describe("GitHub Copilot credential sources", () => {
       },
       {
         source: "copilot-cli:keychain",
+        status: "skipped",
+        error: "credentials_missing",
+        degraded: false,
+      },
+      {
+        source: "copilot-cli:config",
         status: "skipped",
         error: "credentials_missing",
         degraded: false,
@@ -647,7 +665,7 @@ describe("GitHub Copilot credential sources", () => {
       status: "failed",
       error: "GitHub Copilot sign-in required",
     });
-    expect(result.attempts?.[2]).toMatchObject({
+    expect(result.attempts?.[3]).toMatchObject({
       source: "gh:hosts.yml",
       status: "failed",
       error: result.state.error,
@@ -673,7 +691,7 @@ describe("GitHub Copilot credential sources", () => {
     expect(readCachedProvider("copilot")).toBeUndefined();
     expect(api.bearers).toEqual(["Bearer stale-apps-token"]);
     expect((await fetchQuota(options)).state.status).toBe("auth_required");
-    expect(result.attempts?.[2]).toEqual({
+    expect(result.attempts?.[3]).toEqual({
       source: "gh:hosts.yml",
       status: "skipped",
       error: "credentials_keyring_storage",
@@ -696,7 +714,7 @@ describe("GitHub Copilot credential sources", () => {
     expect(readCachedProvider("copilot")).toBeUndefined();
     expect(api.bearers).toEqual([]);
     expect((await fetchQuota(options)).state.status).toBe("auth_required");
-    expect(result.attempts?.[2]).toEqual({
+    expect(result.attempts?.[3]).toEqual({
       source: "gh:hosts.yml",
       status: "skipped",
       error: "credentials_invalid",
@@ -733,6 +751,11 @@ describe("GitHub Copilot credential sources", () => {
         status: "missing",
       },
       {
+        source: "copilot-cli:config",
+        path: join(process.env.COPILOT_HOME!, "config.json"),
+        status: "missing",
+      },
+      {
         source: "gh:hosts.yml",
         path: join(process.env.GH_CONFIG_DIR!, "hosts.yml"),
         status: "available",
@@ -753,7 +776,7 @@ describe("GitHub Copilot credential sources", () => {
       );
       stubUserEndpoint({});
       const keyring = await fetchQuota(options);
-      expect(keyring.attempts?.[2]).toMatchObject({
+      expect(keyring.attempts?.[3]).toMatchObject({
         error: "credentials_keyring_storage",
         credentialPresent: true,
       });
@@ -766,7 +789,7 @@ describe("GitHub Copilot credential sources", () => {
       const api = stubUserEndpoint({ gho_revoked_fixture: 403 });
       const rejected = await fetchQuota(options);
       expect(api.bearers).toEqual(["Bearer gho_revoked_fixture"]);
-      expect(rejected.attempts?.[2]).toMatchObject({
+      expect(rejected.attempts?.[3]).toMatchObject({
         status: "failed",
       });
       expect(presence(rejected)).toBe("absent");
@@ -850,11 +873,11 @@ describe("GitHub Copilot credential sources", () => {
         const result = await fetchQuota(options);
 
         expect(result.state.status).toBe(providerStatus);
-        expect(result.attempts?.[2]).toMatchObject({
+        expect(result.attempts?.[3]).toMatchObject({
           source: "gh:hosts.yml",
           status: "failed",
         });
-        expect(result.attempts?.[2]?.degraded).toBeUndefined();
+        expect(result.attempts?.[3]?.degraded).toBeUndefined();
         expect(presence(result)).toBe("attention");
       },
     );

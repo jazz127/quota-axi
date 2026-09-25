@@ -310,6 +310,7 @@ describe("credential source contract", { timeout: 30_000 }, () => {
     const copilotSources = [
       "apps-json",
       "copilot-cli:keychain",
+      "copilot-cli:config",
       "gh:hosts.yml",
     ];
 
