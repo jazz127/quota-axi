@@ -10,6 +10,7 @@ import {
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { providerPresence } from "../src/lib/source-attempts.js";
 import { redactedResponse, renderQuotaToon } from "../src/render.js";
+import { withUsageFetchFailure } from "../src/providers/usage-fetch-failure.js";
 import { PROVIDER_IDS } from "../src/types.js";
 import type { ProviderQuota, QuotaAxiResponse } from "../src/types.js";
 import {
@@ -122,6 +123,149 @@ describe("renderQuotaTui structure", () => {
     expect(lines[0]).toBe(
       "  quota-axi · 2026-08-06 16:21 PDT · 3 live · 3 need attention · 0 not set up",
     );
+  });
+
+  it("counts stale cache separately from fresh and signed-out providers", () => {
+    const response = fixtureResponse();
+    const stale = response.providers[0];
+    stale.state = {
+      ...stale.state,
+      status: "stale",
+      stale: true,
+      refreshedAt: "2026-08-06T22:00:00.000Z",
+      error: "network unavailable",
+    };
+    response.providers = [stale, codexProvider(), signedOutProvider()];
+    expect(
+      renderQuotaTui(response, { timeZone: "America/Los_Angeles" }).split(
+        "\n",
+      )[0],
+    ).toContain("1 live · 1 stale · 1 needs attention");
+  });
+
+  it("marks a stale card and explains the cached age and failed read", () => {
+    const response = fixtureResponse();
+    const stale = response.providers[0];
+    stale.state = {
+      ...stale.state,
+      status: "stale",
+      stale: true,
+      refreshedAt: "2026-08-06T22:00:00.000Z",
+      error: "network unavailable",
+    };
+    response.providers = [withUsageFetchFailure(stale)];
+    const lines = renderQuotaTui(response, {
+      timeZone: "UTC",
+      colorDepth: "truecolor",
+    }).split("\n");
+    expect(findLine(lines, "◌ claude")).toContain("stale");
+    const plain = stripAnsi(lines.join("\n"));
+    expect(plain).toContain("last refreshed 2026-08-06T22:00:00.000Z ·");
+    expect(plain).toContain("fetch failed network unavailable");
+    expect(lines.join("\n")).not.toContain("38;2;250;179;135");
+  });
+
+  it("uses the stale status when the legacy stale flag is absent", () => {
+    const response = fixtureResponse();
+    const stale = response.providers[0];
+    stale.state = {
+      ...stale.state,
+      status: "stale",
+      stale: undefined,
+      refreshedAt: "2026-08-06T22:00:00.000Z",
+      error: "network unavailable",
+    };
+    response.providers = [withUsageFetchFailure(stale)];
+    const output = renderQuotaTui(response, { timeZone: "UTC" });
+    expect(output).toContain("◌ claude");
+    expect(output).toContain("stale");
+    expect(output).toContain("last refreshed 2026-08-06T22:00:00.000Z");
+    expect(output).toContain("fetch failed network unavailable");
+  });
+
+  it("shows passed window resets as ended instead of now", () => {
+    const response = fixtureResponse();
+    response.providers = [response.providers[0]!];
+    response.providers[0]!.windows[0]!.resetsAt = GENERATED_AT;
+    expect(renderQuotaTui(response).split("\n").join("\n")).toContain("ended");
+    expect(renderQuotaTui(response)).not.toContain("now");
+  });
+
+  it("keeps every labelled Codex account visible on stale cards", () => {
+    const work = {
+      ...codexProvider(),
+      accountKey: "openai-codex-work",
+      account: { label: "Work", credentialHome: "/tmp/codex-work" },
+      state: {
+        ...codexProvider().state,
+        status: "stale" as const,
+        stale: true,
+        refreshedAt: "2026-08-06T22:00:00.000Z",
+        error: "network unavailable",
+      },
+    };
+    const personal = {
+      ...codexProvider(),
+      accountKey: "openai-codex-personal",
+      account: { label: "Personal", credentialHome: "/tmp/codex-personal" },
+      state: { ...work.state },
+    };
+    const lines = renderQuotaTui(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 6,
+        providers: [work, personal],
+      },
+      { columns: 120 },
+    ).split("\n");
+    expect(lines.join("\n")).toContain("account openai-codex-work (Work)");
+    expect(lines.join("\n")).toContain(
+      "account openai-codex-personal (Personal)",
+    );
+  });
+
+  it("preserves input order across reading cards and follows with attention", () => {
+    const stale = claudeProvider();
+    stale.state = {
+      ...stale.state,
+      status: "stale",
+      stale: true,
+      refreshedAt: "2026-08-06T22:00:00.000Z",
+      error: "network unavailable",
+    };
+    const lines = renderQuotaTui(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 6,
+        providers: [
+          stale,
+          codexProvider(),
+          signedOutProvider("cursor", "signed out"),
+        ],
+      },
+      { columns: 80 },
+    ).split("\n");
+    const titleOrder = lines.filter((line) => line.startsWith("╭─"));
+    expect(titleOrder[0]).toContain("◌ claude");
+    expect(titleOrder[1]).toContain("● codex");
+    expect(titleOrder[2]).toContain("○ cursor");
+  });
+
+  it("keeps fresh card notes truncated to one line", () => {
+    const codex = codexProvider();
+    codex.state.remedyCommand =
+      "quota-axi --provider codex --allow-keychain-prompt";
+    const lines = renderQuotaTui(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 6,
+        providers: [codex],
+      },
+      { columns: 80 },
+    ).split("\n");
+    const notes = lines.filter((line) => line.includes("run: quota-axi"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("…");
   });
 
   it("zips live provider cards two-up with live providers first", () => {
@@ -632,6 +776,21 @@ describe("renderQuotaTui structure", () => {
     expect(output).not.toContain("\u0085");
   });
 
+  it("marks a reused reading with its age and keeps it live", () => {
+    const response = fixtureResponse();
+    const claude = response.providers[0];
+    claude.state.reused = true;
+    claude.state.refreshedAt = new Date(
+      Date.parse(GENERATED_AT) - 42_000,
+    ).toISOString();
+    const lines = renderQuotaTui(response, {
+      timeZone: "America/Los_Angeles",
+    }).split("\n");
+    const title = findLine(lines, "● claude");
+    expect(title).toContain("max · oauth · reused 42s");
+    expect(title).not.toContain("stale");
+  });
+
   it("marks a stale provider and keeps effective headroom unknown", () => {
     const response = fixtureResponse();
     const claude = response.providers[0];
@@ -641,7 +800,7 @@ describe("renderQuotaTui structure", () => {
     const lines = renderQuotaTui(response, {
       timeZone: "America/Los_Angeles",
     }).split("\n");
-    const title = findLine(lines, "● claude");
+    const title = findLine(lines, "◌ claude");
     expect(title).toContain("max · oauth · stale");
     findLine(lines, "stale · effective unknown");
     expect(findLine(lines, "stale · effective unknown")).toContain(
@@ -743,7 +902,7 @@ describe("cards for providers with no combinable bound", () => {
 
   it("still marks the card stale when the snapshot is stale", () => {
     const lines = renderWithCopilot(true);
-    expect(findCardLine(lines, 1, "\u25cf copilot")).toContain("stale");
+    expect(findCardLine(lines, 1, "\u25cc copilot")).toContain("stale");
     expect(findCardLine(lines, 1, "stale \u00b7 per-window usage")).toContain(
       "no combined bound",
     );
