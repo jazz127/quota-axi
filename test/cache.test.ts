@@ -18,6 +18,7 @@ import {
   readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedProvider,
+  retireCodexAccount,
   writeCachedProviders,
   stampCodexStoredAccountId,
 } from "../src/cache.js";
@@ -73,6 +74,32 @@ describe("quota cache", () => {
     ).toMatchObject({
       windows: [{ percentUsed: 42 }],
     });
+  });
+
+  it("retires only Codex snapshots stamped for rejected accounts", () => {
+    useTempCache();
+    const defaultA = quota("codex", 10);
+    const keyedA = quota("codex", 20);
+    keyedA.accountKey = "openai-codex";
+    const keyedB = quota("codex", 30);
+    keyedB.accountKey = "openai-codex-work";
+    const unstamped = quota("codex", 40);
+    unstamped.accountKey = "openai-codex-unstamped";
+    stampCodexStoredAccountId(defaultA, "acct-a");
+    stampCodexStoredAccountId(keyedA, "acct-a");
+    stampCodexStoredAccountId(keyedB, "acct-b");
+    writeCachedProviders([defaultA, keyedA, keyedB, unstamped]);
+
+    retireCodexAccount(["acct-a"]);
+
+    expect(readCachedProvider("codex")).toBeUndefined();
+    expect(readCachedProvider("codex", "openai-codex")).toBeUndefined();
+    expect(readCachedProvider("codex", "openai-codex-work")).toMatchObject({
+      windows: [{ percentUsed: 30 }],
+    });
+    expect(
+      readCachedProvider("codex", "openai-codex-unstamped"),
+    ).toMatchObject({ windows: [{ percentUsed: 40 }] });
   });
 
   it("withholds legacy Codex snapshots without account context", () => {

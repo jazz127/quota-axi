@@ -577,29 +577,20 @@ export function retireCachedSlot(
 }
 
 /**
- * Retire a signed-out Codex account: its own slot, plus any other slot stamped
- * with one of the rejected stored account ids. The lane count decides the slot
- * name, so a snapshot written while the account was the sole lane sits in the
- * keyless slot and would otherwise come back as stale once it is sole again.
+ * Retire Codex snapshots stamped with one of the rejected stored account ids.
  * A slot stamped for another account, or not stamped at all, stays.
  */
 export function retireCodexAccount(
-  accountKey: string | undefined,
   accountIds: readonly string[],
 ): void {
   if (!existsSync(cacheFilePath())) return;
-  const slot = accountKey ?? DEFAULT_ACCOUNT_KEY;
   const contextIds = new Set(accountIds.map(codexAccountContextId));
   withCacheWriteLock(() => {
     const existing = readCacheProviders();
     const remaining = existing.filter(
       (item) =>
         item.snapshot.provider !== "codex" ||
-        ((accountKey === undefined ||
-          (item.snapshot.accountKey ?? DEFAULT_ACCOUNT_KEY) !== slot) &&
-          !(
-            item.credentialContextId && contextIds.has(item.credentialContextId)
-          )),
+        !(item.credentialContextId && contextIds.has(item.credentialContextId)),
     );
     if (remaining.length === existing.length) return;
     writeCacheFile(cacheFilePath(), remaining);

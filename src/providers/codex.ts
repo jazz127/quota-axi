@@ -905,7 +905,7 @@ function codexFailureReport(
     attempts,
     {
       definitive: error === CODEX_SIGN_IN_REQUIRED,
-      retire: () => retireCodexAccount(accountKey, accountIds),
+      retire: () => retireCodexAccount(accountIds),
     },
   );
   if (stale) {

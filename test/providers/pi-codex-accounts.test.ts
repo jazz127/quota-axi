@@ -1293,10 +1293,13 @@ describe("Codex Pi sibling account lanes", () => {
   });
 
   it("retires a Pi lane's own snapshot when its credential is rejected", async () => {
-    const { writeCachedProviders, readCachedProvider } =
+    const {
+      stampCodexStoredAccountId,
+      writeCachedProviders,
+      readCachedProvider,
+    } =
       await import("../../src/cache.js");
-    writeCachedProviders([
-      {
+    const snapshot = {
         provider: "codex",
         accountKey: "openai-codex",
         label: "Codex",
@@ -1316,8 +1319,9 @@ describe("Codex Pi sibling account lanes", () => {
           refreshedAt: new Date().toISOString(),
           sourcesTried: ["pi:openai-codex"],
         },
-      },
-    ]);
+      };
+    stampCodexStoredAccountId(snapshot, "acct-personal");
+    writeCachedProviders([snapshot]);
     writePiAuth({
       "openai-codex": piOauthEntry({
         access: "personal-access-token",
