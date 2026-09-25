@@ -861,7 +861,7 @@ function codexSuccessReport(
   });
   stampCodexStoredAccountId(
     report,
-    quota.account?.accountId ?? storedAccountId,
+    storedAccountId ?? quota.account?.accountId,
   );
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
