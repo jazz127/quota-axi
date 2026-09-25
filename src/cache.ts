@@ -580,9 +580,7 @@ export function retireCachedSlot(
  * Retire Codex snapshots stamped with one of the rejected stored account ids.
  * A slot stamped for another account, or not stamped at all, stays.
  */
-export function retireCodexAccount(
-  accountIds: readonly string[],
-): void {
+export function retireCodexAccount(accountIds: readonly string[]): void {
   if (!existsSync(cacheFilePath())) return;
   const contextIds = new Set(accountIds.map(codexAccountContextId));
   withCacheWriteLock(() => {

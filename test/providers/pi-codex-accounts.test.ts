@@ -1348,29 +1348,28 @@ describe("Codex Pi sibling account lanes", () => {
       stampCodexStoredAccountId,
       writeCachedProviders,
       readCachedProvider,
-    } =
-      await import("../../src/cache.js");
+    } = await import("../../src/cache.js");
     const snapshot = {
-        provider: "codex",
-        accountKey: "openai-codex",
-        label: "Codex",
-        source: "pi:openai-codex",
-        windows: [
-          {
-            id: "weekly",
-            label: "week",
-            kind: "weekly",
-            percentUsed: 20,
-            windowSeconds: 604_800,
-          },
-        ],
-        state: {
-          status: "fresh",
-          stale: false,
-          refreshedAt: new Date().toISOString(),
-          sourcesTried: ["pi:openai-codex"],
+      provider: "codex",
+      accountKey: "openai-codex",
+      label: "Codex",
+      source: "pi:openai-codex",
+      windows: [
+        {
+          id: "weekly",
+          label: "week",
+          kind: "weekly",
+          percentUsed: 20,
+          windowSeconds: 604_800,
         },
-      };
+      ],
+      state: {
+        status: "fresh",
+        stale: false,
+        refreshedAt: new Date().toISOString(),
+        sourcesTried: ["pi:openai-codex"],
+      },
+    };
     stampCodexStoredAccountId(snapshot, "acct-personal");
     writeCachedProviders([snapshot]);
     writePiAuth({

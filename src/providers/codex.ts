@@ -886,6 +886,7 @@ function codexFailureReport(
     try {
       retireCodexAccount(accountIds);
     } catch {
+      // Cache retirement is best effort; preserve the provider failure below.
     }
   }
   const cached = readCachedCodexProvider(accountKey, accountIds);

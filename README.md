@@ -452,7 +452,7 @@ A failed CLI reading is shown as stale or unavailable only when `account/read` c
 A native login (from `auth.json` or the CLI) for the same account as a Pi lane is not a second lane.
 The account is compared by the vendor `accountId` a fresh reading reports, or else the stored one; email, tokens, and key names are never used as identity.
 That Pi lane keeps its own reading when fresh, and shows the native reading when its own is expired, rejected, or stale and the native one is fresh, or when only the native one has stale cached windows.
-A proven sign-out, or a native login that coalesces into a Pi lane with a fresh reading on either side, removes the cached `codex-home` snapshot so a later failed probe cannot bring that account back.
+A proven sign-out retires only cached Codex snapshots whose stored account identity matches the rejected credential; a native login that coalesces into a Pi lane no longer removes the shared `codex-home` slot by name, so another account's snapshot cannot be discarded.
 `--profile-only` still reads one native Codex file and never opens Pi auth.
 
 ### Account keys and compatibility

@@ -97,9 +97,9 @@ describe("quota cache", () => {
     expect(readCachedProvider("codex", "openai-codex-work")).toMatchObject({
       windows: [{ percentUsed: 30 }],
     });
-    expect(
-      readCachedProvider("codex", "openai-codex-unstamped"),
-    ).toMatchObject({ windows: [{ percentUsed: 40 }] });
+    expect(readCachedProvider("codex", "openai-codex-unstamped")).toMatchObject(
+      { windows: [{ percentUsed: 40 }] },
+    );
   });
 
   it("withholds legacy Codex snapshots without account context", () => {
