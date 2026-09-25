@@ -415,7 +415,7 @@ export async function resolveCopilotCliConfigCredential(
   const entries = tokens as Record<string, unknown>;
   if (!Object.hasOwn(entries, identity.account))
     return unresolvedConfig("absent", undefined, true);
-  if (presenceOnly === "silence")
+  if (presenceOnly !== false)
     return unresolvedConfig("unsupported", "value_read_deferred");
   const value = entries[identity.account];
   if (

@@ -38,6 +38,20 @@ describe("Copilot CLI selected plaintext fallback", () => {
     expect(JSON.stringify(result)).not.toContain(token);
   });
 
+  it("defers the selected plaintext token during presence-only inspection", async () => {
+    const deps = fixture({
+      lastLoggedInUser: selected,
+      copilotTokens: { "https://github.com:selected-user": "not-a-token" },
+    });
+    const result = await resolveCopilotCliConfigCredential(true, deps);
+    expect(result).toMatchObject({
+      status: "unsupported",
+      silent: false,
+      report: { error: "value_read_deferred", credentialPresent: true },
+    });
+    expect(JSON.stringify(result)).not.toContain("not-a-token");
+  });
+
   it("handles malformed and oversized config without a token leak", async () => {
     const deps = fixture();
     deps.readFile.mockResolvedValueOnce(Buffer.from("{broken"));
