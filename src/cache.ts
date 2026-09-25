@@ -73,8 +73,8 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
  * such context says nothing about another, so each is stamped on write and
  * checked on stale reuse - strictly for Claude, Kimi, Command Code, MiniMax,
  * ElevenLabs, and Devin, whose identity a reading always has (and which skip
- * write and clear when that identity is missing), and on proven mismatch for Codex,
- * whose stored account id is optional.
+ * write and clear when that identity is missing). Codex can write an unstamped
+ * snapshot, but stale reuse requires a matching stored account id.
  *
  * How that stamp is obtained is not the same question for each. A Claude
  * profile is fixed by this process's own environment, so deriving it here reads
@@ -341,8 +341,8 @@ function readCachedRecord(
 }
 
 /**
- * Codex stale quota, withheld when the snapshot was stamped with a stored
- * ChatGPT account id none of the failed reading's tried credentials name. A
+ * Codex stale quota, served only when the snapshot's stored ChatGPT account id
+ * matches a credential the failed reading tried. A
  * Codex slot is not tied to one account by its name: the keyless slot is shared
  * by a sole discovered lane and the single-account path, and a stable Pi entry
  * key can be signed in to a different account, so the slot alone cannot say
@@ -351,19 +351,26 @@ function readCachedRecord(
  * The stamp is the stored id, not the vendor response id: those can differ
  * while the same token is live, and a later failed probe only has the store.
  * An unstamped snapshot, or a reading whose tried credentials name no account,
- * proves nothing either way and is served as before.
+ * cannot establish ownership and is withheld from stale fallback.
  */
 export function readCachedCodexProvider(
   accountKey: string | undefined,
   accountIds: readonly string[],
 ): ProviderQuota | undefined {
-  const record = readCachedRecord("codex", accountKey);
-  if (!record) return undefined;
-  const contextId = record.credentialContextId;
-  if (!contextId || accountIds.length === 0) return record.snapshot;
-  return accountIds.some((id) => codexAccountContextId(id) === contextId)
-    ? record.snapshot
-    : undefined;
+  if (accountIds.length === 0) return undefined;
+  const records = [
+    readCachedRecord("codex", accountKey),
+    ...(accountKey === "codex-home"
+      ? [readCachedRecord("codex", undefined)]
+      : []),
+  ];
+  return records.find(
+    (record) =>
+      record?.credentialContextId !== undefined &&
+      accountIds.some(
+        (id) => codexAccountContextId(id) === record.credentialContextId,
+      ),
+  )?.snapshot;
 }
 
 /**
@@ -622,28 +629,18 @@ export function retireCachedSlot(
 }
 
 /**
- * Retire a signed-out Codex account: its own slot, plus any other slot stamped
- * with one of the rejected stored account ids. The lane count decides the slot
- * name, so a snapshot written while the account was the sole lane sits in the
- * keyless slot and would otherwise come back as stale once it is sole again.
+ * Retire Codex snapshots stamped with one of the rejected stored account ids.
  * A slot stamped for another account, or not stamped at all, stays.
  */
-export function retireCodexAccount(
-  accountKey: string | undefined,
-  accountIds: readonly string[],
-): void {
+export function retireCodexAccount(accountIds: readonly string[]): void {
   if (!existsSync(cacheFilePath())) return;
-  const slot = accountKey ?? DEFAULT_ACCOUNT_KEY;
   const contextIds = new Set(accountIds.map(codexAccountContextId));
   withCacheWriteLock(() => {
     const existing = readCacheProviders();
     const remaining = existing.filter(
       (item) =>
         item.snapshot.provider !== "codex" ||
-        ((item.snapshot.accountKey ?? DEFAULT_ACCOUNT_KEY) !== slot &&
-          !(
-            item.credentialContextId && contextIds.has(item.credentialContextId)
-          )),
+        !(item.credentialContextId && contextIds.has(item.credentialContextId)),
     );
     if (remaining.length === existing.length) return;
     writeCacheFile(cacheFilePath(), remaining);
@@ -739,8 +736,8 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
   if (!snapshot) return undefined;
   const contextId = CONTEXT_SCOPED_PROVIDERS[provider.provider]?.(provider);
   // Claude, Kimi, Command Code, MiniMax, ElevenLabs, and Devin require a published
-  // identity; Codex stamps are optional and withheld only on proven mismatch
-  // at read time.
+  // identity; Codex stamps are optional at write time, but an unstamped
+  // snapshot cannot be served as stale.
   if (
     provider.provider !== "codex" &&
     CONTEXT_SCOPED_PROVIDERS[provider.provider] &&

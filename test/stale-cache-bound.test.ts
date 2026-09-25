@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -134,12 +135,17 @@ function fixture(seed?: { timing: WindowTiming; refreshedAt: string }) {
             label: "credits",
             kind: "credits",
           }),
-          snapshot("codex", "Codex", "oauth", {
-            id: "weekly",
-            label: "week",
-            kind: "weekly",
-            windowSeconds: 604_800,
-          }),
+          {
+            ...snapshot("codex", "Codex", "oauth", {
+              id: "weekly",
+              label: "week",
+              kind: "weekly",
+              windowSeconds: 604_800,
+            }),
+            credentialContext: createHash("sha256")
+              .update(JSON.stringify(["codex-account-v1", "acct-fixture"]))
+              .digest("hex"),
+          },
           snapshot("cursor", "Cursor", "api", {
             id: "included_usage",
             label: "included_usage",
