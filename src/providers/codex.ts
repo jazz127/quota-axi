@@ -3,8 +3,8 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import {
-  deleteCachedProvider,
   retireCodexAccount,
+  retireCachedSlot,
   readCachedCodexProvider,
   readCachedProvider,
   stampCodexStoredAccountId,
@@ -604,12 +604,6 @@ async function discoverCodexAccounts(
             continue;
           }
           lane.nativeAccountKeys = accountKeys;
-          if (
-            reading.state.status === "fresh" ||
-            piReading.state.status === "fresh"
-          ) {
-            retireCodexHomeSnapshot();
-          }
           return undefined;
         }
         return { ...reading, accountKeys };
@@ -648,14 +642,6 @@ function laneIdentity(
     : storedAccountId;
 }
 
-function retireCodexHomeSnapshot(): void {
-  try {
-    deleteCachedProvider("codex", CODEX_HOME_ACCOUNT_KEY);
-  } catch {
-    return;
-  }
-}
-
 async function fetchCliAccountQuota(): Promise<ProviderQuota | undefined> {
   try {
     return codexSuccessReport(await probeCodexCli(), "cli-rpc", [
@@ -663,7 +649,11 @@ async function fetchCliAccountQuota(): Promise<ProviderQuota | undefined> {
     ]);
   } catch (error) {
     if (error instanceof CodexCliSignedOutError) {
-      retireCodexHomeSnapshot();
+      try {
+        retireCachedSlot("codex", CODEX_HOME_ACCOUNT_KEY);
+      } catch {
+        // Preserve the confirmed sign-out result if cache retirement fails.
+      }
       return undefined;
     }
     if (
@@ -1125,7 +1115,10 @@ function codexSuccessReport(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
-  stampCodexStoredAccountId(report, storedAccountId);
+  stampCodexStoredAccountId(
+    report,
+    storedAccountId ?? quota.account?.accountId,
+  );
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;
@@ -1133,7 +1126,7 @@ function codexSuccessReport(
 
 /**
  * `accountIds` names the ChatGPT accounts the credentials this reading tried
- * still store, so a snapshot stamped for another stored identity is not served
+ * still store, so a snapshot without a matching stored identity is not served
  * back as this account's stale windows. `credentialKey` is the key of the
  * credential this failed reading speaks for; a stale reading instead names the
  * key of the credential that produced its cached snapshot.
@@ -1148,6 +1141,13 @@ function codexFailureReport(
   credentialKey = codexCredentialKey(source) ?? CODEX_HOME_ACCOUNT_KEY,
 ): ProviderQuota {
   const softExpiry = error === CODEX_ACCESS_TOKEN_EXPIRED;
+  if (error === CODEX_SIGN_IN_REQUIRED && accountIds.length > 0) {
+    try {
+      retireCodexAccount(accountIds);
+    } catch {
+      // Cache retirement is best effort; preserve the provider failure below.
+    }
+  }
   const cached = readCachedCodexProvider(accountKey, accountIds);
   const stale = staleUnlessSignOut(
     cached,
@@ -1156,7 +1156,7 @@ function codexFailureReport(
     attempts,
     {
       definitive: error === CODEX_SIGN_IN_REQUIRED,
-      retire: () => retireCodexAccount(accountKey, accountIds),
+      retire: () => retireCodexAccount(accountIds),
     },
   );
   if (stale) {
@@ -1169,15 +1169,21 @@ function codexFailureReport(
       accountKeys: [codexCredentialKey(cached?.source) ?? credentialKey],
     };
   }
+  const failureStatus = retryAfter
+    ? "rate_limited"
+    : softExpiry
+      ? "unavailable"
+      : statusFromError(error);
+  // A generic failure whose tried credentials store no ChatGPT account id names
+  // no seat, so it is unmeasured rather than an error of any one account.
+  // Credential verdicts and rate limits keep their own status.
+  const unidentified = accountIds.length === 0;
   const report = failedProvider({
     provider: "codex",
     label: "Codex",
     ...(source ? { source } : {}),
-    status: retryAfter
-      ? "rate_limited"
-      : softExpiry
-        ? "unavailable"
-        : statusFromError(error),
+    status:
+      unidentified && failureStatus === "error" ? "unavailable" : failureStatus,
     error,
     retryAfter,
     sourcesTried: sourceNames(attempts),

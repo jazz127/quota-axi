@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +12,7 @@ import {
   fetchAccountQuotas,
   inspectAccountAuth,
 } from "../../src/providers/accounts.js";
+import { writeCachedProviders } from "../../src/cache.js";
 import { quotaJsonReport, renderQuotaToon } from "../../src/render.js";
 import { renderQuotaTui } from "../../src/tui.js";
 import type { ProviderOptions } from "../../src/types.js";
@@ -214,6 +221,36 @@ describe("Codex native home discovery", () => {
         true,
       ),
     ).toContain(luna);
+  });
+
+  it("does not attribute a signed-in home's cached quota to a now unauthenticated home", async () => {
+    const signedOutLater = home("selected", "acct-selected");
+    home(".codex-luna", "acct-luna");
+    process.env.QUOTA_AXI_CODEX_HOMES = JSON.stringify([
+      join(root, ".codex-luna"),
+    ]);
+    stubUsage();
+    const { createCodexAdapter } = await import("../../src/providers/codex.js");
+    const adapter = createCodexAdapter();
+
+    const firstRead = await fetchAccountQuotas(adapter, options);
+    expect(firstRead.map((row) => row.windows[0]?.percentUsed)).toEqual([
+      100, 13,
+    ]);
+    writeCachedProviders(firstRead);
+    unlinkSync(join(signedOutLater, "auth.json"));
+
+    const secondRead = await fetchAccountQuotas(adapter, options);
+    expect(secondRead[0]).toMatchObject({
+      accountKey: "codex-home",
+      windows: [],
+      state: { status: "auth_required" },
+    });
+    expect(secondRead[1]).toMatchObject({
+      accountKey: "codex-luna",
+      windows: [{ percentUsed: 13 }],
+      state: { status: "fresh" },
+    });
   });
 
   it("shows missing and unreadable configured homes without hiding a healthy seat", async () => {

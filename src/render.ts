@@ -347,7 +347,13 @@ function providerStateRows(
       remedy: NONE,
     });
   }
-  if (provider.provider === "codex" && provider.resetsAvailable !== undefined) {
+  if (
+    provider.provider === "codex" &&
+    provider.state.status === "fresh" &&
+    !provider.state.stale &&
+    !provider.state.reused &&
+    provider.resetsAvailable !== undefined
+  ) {
     rows.push({
       ...providerColumns(provider),
       scope: "all",
@@ -728,10 +734,25 @@ export function redactedResponse(
   response: QuotaAxiResponse,
   full: boolean,
 ): QuotaAxiResponse {
-  if (full) return response;
-  return {
+  const current = {
     ...response,
-    providers: response.providers.map((provider) => ({
+    providers: response.providers.map((provider) => {
+      if (
+        provider.provider !== "codex" ||
+        (provider.state.status === "fresh" &&
+          !provider.state.stale &&
+          !provider.state.reused)
+      )
+        return provider;
+      const withoutCount = { ...provider };
+      delete withoutCount.resetsAvailable;
+      return withoutCount;
+    }),
+  };
+  if (full) return current;
+  return {
+    ...current,
+    providers: current.providers.map((provider) => ({
       ...provider,
       accountLocator: undefined,
       account:
