@@ -10,7 +10,11 @@ import {
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { withUsageFetchFailure } from "../src/providers/usage-fetch-failure.js";
 import { providerPresence } from "../src/lib/source-attempts.js";
-import { redactedResponse, renderQuotaToon } from "../src/render.js";
+import {
+  quotaJsonReport,
+  redactedResponse,
+  renderQuotaToon,
+} from "../src/render.js";
 import { PROVIDER_IDS } from "../src/types.js";
 import type { ProviderQuota, QuotaAxiResponse } from "../src/types.js";
 import {
@@ -100,6 +104,104 @@ describe("renderQuotaTui structure", () => {
     expect(weekly).toContain("week");
     expect(weekly).toHaveLength(CARD_COLUMNS);
   });
+
+  it("keeps a large Codex reset count exact in TOON and JSON while bounding the card", () => {
+    const response = fixtureResponse();
+    const codex = response.providers.find(
+      (provider) => provider.provider === "codex",
+    );
+    if (!codex) throw new Error("Codex fixture missing");
+    codex.resetsAvailable = 123_456;
+
+    expect(renderQuotaToon(response, "quota-axi", false)).toContain(
+      "123456 banked resets",
+    );
+    expect(quotaJsonReport(response, false).providers[1].resetsAvailable).toBe(
+      123_456,
+    );
+    const tui = renderQuotaTui(response, {
+      timeZone: "America/Los_Angeles",
+    }).split("\n");
+    expect(findCardLine(tui, 1, "99+ resets")).toHaveLength(CARD_COLUMNS);
+    expect(tui.join("\n")).not.toContain("123456");
+  });
+
+  it.each(["stale", "reused"] as const)(
+    "omits an old Codex count from %s readings on every surface",
+    (condition) => {
+      const response = fixtureResponse();
+      const codex = response.providers.find(
+        (provider) => provider.provider === "codex",
+      );
+      if (!codex) throw new Error("Codex fixture missing");
+      codex.resetsAvailable = 2;
+      if (condition === "stale") {
+        codex.state.status = "stale";
+        codex.state.stale = true;
+      } else {
+        codex.state.reused = true;
+      }
+
+      expect(renderQuotaToon(response, "quota-axi", false)).not.toContain(
+        "resets_available",
+      );
+      expect(quotaJsonReport(response, false).providers[1]).not.toHaveProperty(
+        "resetsAvailable",
+      );
+      expect(quotaJsonReport(response, true).providers[1]).not.toHaveProperty(
+        "resetsAvailable",
+      );
+      expect(
+        renderQuotaTui(response, { timeZone: "America/Los_Angeles" }),
+      ).not.toMatch(/\b2 resets\b/);
+    },
+  );
+
+  it("shows a vendor-reported zero without inferring a count", () => {
+    const response = fixtureResponse();
+    const codex = response.providers.find(
+      (provider) => provider.provider === "codex",
+    );
+    if (!codex) throw new Error("Codex fixture missing");
+    codex.resetsAvailable = 0;
+    expect(renderQuotaToon(response, "quota-axi", false)).toContain(
+      "0 banked resets",
+    );
+    expect(
+      findCardLine(renderQuotaTui(response).split("\n"), 1, "0 resets"),
+    ).toHaveLength(CARD_COLUMNS);
+  });
+
+  it.each(["model:codex_bengalfox:7d", "code_review_weekly"])(
+    "keeps resets on the account row before %s",
+    (lastId) => {
+      const response = fixtureResponse();
+      const codex = response.providers.find(
+        (provider) => provider.provider === "codex",
+      );
+      if (!codex) throw new Error("Codex fixture missing");
+      codex.windows = [
+        {
+          ...codex.windows[0],
+          id: "five_hour",
+          label: "session",
+          percentRemaining: 60,
+        },
+        {
+          ...codex.windows[0],
+          id: lastId,
+          label: "other",
+          percentRemaining: 90,
+        },
+      ];
+      codex.resetsAvailable = 2;
+      const tui = renderQuotaTui(response).split("\n");
+      const row = findCardLine(tui, 1, "2 resets");
+      expect(row).toContain("60%");
+      expect(row).not.toContain("90%");
+      expect(row).toHaveLength(CARD_COLUMNS);
+    },
+  );
 
   it("keeps the reset display absent when Codex does not report a count", () => {
     const response = fixtureResponse();

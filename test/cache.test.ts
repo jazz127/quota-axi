@@ -19,6 +19,7 @@ import {
   readCachedMiniMaxProvider,
   readCachedOpenRouterProvider,
   readCachedProvider,
+  readSnapshotProviders,
   retireCodexAccount,
   writeCachedProviders,
   stampCodexStoredAccountId,
@@ -67,6 +68,39 @@ afterEach(() => {
 });
 
 describe("quota cache", () => {
+  it("never stores or replays a Codex reset count", () => {
+    useTempCache();
+    const counted = { ...quota("codex", 42), resetsAvailable: 2 };
+    stampCodexStoredAccountId(counted, "acct-signed-in");
+    writeCachedProviders([counted]);
+
+    expect(readFileSync(cacheFilePath(), "utf8")).not.toContain(
+      "resetsAvailable",
+    );
+    expect(
+      readCachedCodexProvider(undefined, ["acct-signed-in"]),
+    ).not.toHaveProperty("resetsAvailable");
+
+    // A snapshot written by an older house version must lose the count too.
+    const snapshotFile = join(tempDir as string, "legacy-snapshot.json");
+    writeFileSync(
+      snapshotFile,
+      JSON.stringify({
+        schemaVersion: 3,
+        providers: [{ ...counted, resetsAvailable: 5 }],
+      }),
+    );
+    const reused = readSnapshotProviders(
+      snapshotFile,
+      "codex",
+      Date.parse("2026-07-06T19:00:00Z"),
+    );
+    expect(reused).toMatchObject([{ state: { reused: true } }]);
+    expect((reused as ProviderQuota[])[0]).not.toHaveProperty(
+      "resetsAvailable",
+    );
+  });
+
   it("serves Codex stale quota only for a matching stored account", () => {
     useTempCache();
     const snapshot = quota("codex", 42);
