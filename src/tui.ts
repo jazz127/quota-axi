@@ -400,7 +400,15 @@ function buildLiveCard(
     for (const window of provider.windows) {
       lines.push(
         interior(
-          windowRow(window, generatedAtMs, provider.windows, show),
+          windowRow(
+            window,
+            generatedAtMs,
+            provider.windows,
+            show,
+            provider.provider === "codex" && window.id === "weekly"
+              ? provider.resetsAvailable
+              : undefined,
+          ),
           border,
         ),
       );
@@ -664,6 +672,7 @@ function windowRow(
   generatedAtMs: number,
   windows: QuotaWindow[],
   show: TuiShow,
+  resetsAvailable?: number,
 ): Line {
   if (window.shareOf) {
     return shareWindowRow(window, generatedAtMs, windows);
@@ -671,10 +680,23 @@ function windowRow(
   const pct = window.percentRemaining;
   const marker = window.pace?.timeRemainingPercent;
   const reset = resetCountdown(window, generatedAtMs);
+  const resetCount =
+    resetsAvailable === undefined
+      ? undefined
+      : `${resetsAvailable} reset${resetsAvailable === 1 ? "" : "s"}`;
   return [
     { text: "   " },
     { text: padEndDisplay(shortWindowLabel(window), 8), style: "label" },
-    ...thinBar(pct, marker, WINDOW_BAR_WIDTH, show),
+    ...thinBar(
+      pct,
+      marker,
+      Math.max(
+        1,
+        WINDOW_BAR_WIDTH -
+          (resetCount === undefined ? 0 : resetCount.length + 1),
+      ),
+      show,
+    ),
     { text: " " },
     {
       text: (pct === undefined
@@ -685,6 +707,9 @@ function windowRow(
     },
     { text: "  " },
     { text: padEndDisplay(reset, 6), style: "dim" },
+    ...(resetCount === undefined
+      ? []
+      : [{ text: " " }, { text: resetCount, style: "label" as const }]),
     { text: " " },
   ];
 }
