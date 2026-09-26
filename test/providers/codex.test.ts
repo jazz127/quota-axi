@@ -96,6 +96,15 @@ describe("Codex quota parsing", () => {
     expect(result?.resetsAvailable).toBe(0);
   });
 
+  it("reads the camelCase reset-credit and count fields", () => {
+    const result = normalizeCodexUsage({
+      rate_limit: { primary_window: { used_percent: 10 } },
+      rateLimitResetCredits: { availableCount: 2 },
+    });
+
+    expect(result?.resetsAvailable).toBe(2);
+  });
+
   it("merges app-server account and rate limit RPC responses", () => {
     const merged = mergeAccountAndLimits(
       { account: { email: "person@example.invalid", planType: "pro" } },
