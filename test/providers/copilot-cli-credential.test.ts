@@ -80,6 +80,28 @@ describe("Copilot CLI selected plaintext fallback", () => {
     expect(JSON.stringify(result)).not.toContain(token);
   });
 
+  it.each([
+    [{}, {}],
+    [{ theme: "dark" }, { COPILOT_HOME: "/custom" }],
+    [{ loggedInUsers: [selected], authTokens: null }, { GH_TOKEN: "x" }],
+    [
+      {
+        lastLoggedInUser: { host: "https://enterprise.example", login: "a" },
+        authTokens: {},
+      },
+      {},
+    ],
+  ])(
+    "stays silent when config %j holds no plaintext token material",
+    async (data, environment) => {
+      const deps = fixture(data);
+      Object.assign(deps.environment, environment);
+      expect(
+        await resolveCopilotCliConfigCredential(false, deps),
+      ).toMatchObject({ status: "absent", silent: true });
+    },
+  );
+
   it("defers the selected plaintext token during presence-only inspection", async () => {
     const deps = fixture({
       lastLoggedInUser: selected,

@@ -390,6 +390,17 @@ export async function resolveCopilotCliConfigCredential(
   } catch {
     return unresolvedConfig("structurally_invalid", "credentials_invalid");
   }
+  const tokens = data.authTokens;
+  if (
+    tokens === undefined ||
+    tokens === null ||
+    (typeof tokens === "object" &&
+      !Array.isArray(tokens) &&
+      Object.keys(tokens).length === 0)
+  )
+    return unresolvedConfig("absent", undefined, true);
+  if (typeof tokens !== "object" || Array.isArray(tokens))
+    return unresolvedConfig("structurally_invalid", "credentials_invalid");
   const identity = identityFromConfig(data);
   if (!identity)
     return unresolvedConfig("unsupported", COPILOT_CLI_UNCONFIRMED_ACCOUNT);
@@ -407,11 +418,6 @@ export async function resolveCopilotCliConfigCredential(
     return unresolvedConfig("unsupported", "environment_selection_unsupported");
   if (identity.host !== "https://github.com")
     return unresolvedConfig("unsupported", "selected_host_unsupported");
-  const tokens = data.authTokens;
-  if (tokens === undefined || tokens === null)
-    return unresolvedConfig("absent", undefined, true);
-  if (!tokens || typeof tokens !== "object" || Array.isArray(tokens))
-    return unresolvedConfig("structurally_invalid", "credentials_invalid");
   const entries = tokens as Record<string, unknown>;
   if (!Object.hasOwn(entries, identity.account))
     return unresolvedConfig("absent", undefined, true);
