@@ -20,7 +20,7 @@ function fixture() {
         JSON.stringify({
           lastLoggedInUser: selected,
           loggedInUsers: [selected, { ...selected, login: "other-user" }],
-          copilotTokens: { [account]: "must-not-read-plaintext" },
+          authTokens: { [account]: { token: "must-not-read-plaintext" } },
         }),
       ),
     ),

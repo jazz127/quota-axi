@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchQuota, inspectAuth } from "../../src/providers/copilot.js";
 import {
   resolveCopilotCliCredential,
+  resolveCopilotCliConfigCredential,
   COPILOT_CLI_SOURCE,
 } from "../../src/providers/copilot-cli-credential.js";
 import { resolveGhCliCredential } from "../../src/providers/gh-cli-credential.js";
@@ -15,6 +16,7 @@ vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => ({
   >()),
   COPILOT_CLI_SOURCE: "copilot-cli:keychain",
   resolveCopilotCliCredential: vi.fn(),
+  resolveCopilotCliConfigCredential: vi.fn(),
 }));
 vi.mock("../../src/providers/gh-cli-credential.js", () => ({
   GH_CLI_CREDENTIAL_SOURCE: "gh:hosts.yml",
@@ -67,6 +69,11 @@ beforeEach(() => {
     token: nativeToken,
     silent: false,
     report: { source: COPILOT_CLI_SOURCE, status: "available" },
+  });
+  vi.mocked(resolveCopilotCliConfigCredential).mockResolvedValue({
+    status: "absent",
+    silent: true,
+    report: { source: "copilot-cli:config", status: "missing" },
   });
   vi.mocked(resolveGhCliCredential).mockResolvedValue({
     status: "resolved",
@@ -260,6 +267,7 @@ describe("Copilot secure-source integration", () => {
     expect(result.attempts?.map((a) => a.source)).toEqual([
       "api",
       COPILOT_CLI_SOURCE,
+      "copilot-cli:config",
       "gh:hosts.yml",
     ]);
     expect(

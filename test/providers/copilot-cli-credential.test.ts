@@ -8,12 +8,143 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { resolveCopilotCliCredential } from "../../src/providers/copilot-cli-credential.js";
+import {
+  resolveCopilotCliCredential,
+  resolveCopilotCliConfigCredential,
+} from "../../src/providers/copilot-cli-credential.js";
 import { copilotCliKeychainAccessMarkerPath } from "../../src/lib/fs.js";
 
 const options = { allowKeychainPrompt: true, refreshCredentials: false };
 const token = "gho_synthetic_fixture";
 const selected = { host: "https://github.com", login: "selected-user" };
+describe("Copilot CLI selected plaintext fallback", () => {
+  it("reads the selected 1.0.88 authTokens entry after full-line comments", async () => {
+    const deps = fixture();
+    deps.readFile.mockResolvedValue(
+      Buffer.from(
+        "// Copilot CLI config\n// another comment\n" +
+          JSON.stringify({
+            lastLoggedInUser: selected,
+            authTokens: { "https://github.com:selected-user": { token } },
+          }),
+      ),
+    );
+    expect(await resolveCopilotCliConfigCredential(false, deps)).toMatchObject({
+      status: "resolved",
+      token,
+      report: { source: "copilot-cli:config", status: "available" },
+    });
+  });
+
+  it("does not infer a credential from the unestablished copilotTokens field", async () => {
+    const deps = fixture({
+      lastLoggedInUser: selected,
+      copilotTokens: { "https://github.com:selected-user": token },
+    });
+    expect(await resolveCopilotCliConfigCredential(false, deps)).toMatchObject({
+      status: "absent",
+      silent: true,
+    });
+  });
+
+  it("rejects a selected entry without the observed nested token field", async () => {
+    const deps = fixture({
+      lastLoggedInUser: selected,
+      authTokens: { "https://github.com:selected-user": token },
+    });
+    const result = await resolveCopilotCliConfigCredential(false, deps);
+    expect(result).toMatchObject({
+      status: "structurally_invalid",
+      report: { error: "credentials_invalid" },
+    });
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it("ignores another user's entry", async () => {
+    const deps = fixture({
+      lastLoggedInUser: selected,
+      authTokens: { "https://github.com:other-user": { token } },
+    });
+    const result = await resolveCopilotCliConfigCredential(false, deps);
+    expect(result).toMatchObject({ status: "absent", silent: true });
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("reports an unselected account as unconfirmed", async () => {
+    const deps = fixture({
+      loggedInUsers: [selected],
+      authTokens: { "https://github.com:selected-user": { token } },
+    });
+    const result = await resolveCopilotCliConfigCredential(false, deps);
+    expect(result.report.error).toBe("selected_account_unconfirmed");
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it.each([
+    [{}, {}],
+    [{ theme: "dark" }, { COPILOT_HOME: "/custom" }],
+    [{ loggedInUsers: [selected], authTokens: null }, { GH_TOKEN: "x" }],
+    [
+      {
+        lastLoggedInUser: { host: "https://enterprise.example", login: "a" },
+        authTokens: {},
+      },
+      {},
+    ],
+  ])(
+    "stays silent when config %j holds no plaintext token material",
+    async (data, environment) => {
+      const deps = fixture(data);
+      Object.assign(deps.environment, environment);
+      expect(
+        await resolveCopilotCliConfigCredential(false, deps),
+      ).toMatchObject({ status: "absent", silent: true });
+    },
+  );
+
+  it("defers the selected plaintext token during presence-only inspection", async () => {
+    const deps = fixture({
+      lastLoggedInUser: selected,
+      authTokens: {
+        "https://github.com:selected-user": { token: "not-a-token" },
+      },
+    });
+    const result = await resolveCopilotCliConfigCredential(true, deps);
+    expect(result).toMatchObject({
+      status: "unsupported",
+      silent: false,
+      report: { error: "value_read_deferred", credentialPresent: true },
+    });
+    expect(JSON.stringify(result)).not.toContain("not-a-token");
+  });
+
+  it("handles malformed and oversized config without a token leak", async () => {
+    const deps = fixture();
+    deps.readFile.mockResolvedValueOnce(Buffer.from("{broken"));
+    const malformed = await resolveCopilotCliConfigCredential(false, deps);
+    expect(malformed).toMatchObject({
+      status: "structurally_invalid",
+      report: { error: "credentials_invalid" },
+    });
+    deps.readFile.mockResolvedValueOnce(Buffer.alloc(1024 * 1024 + 1));
+    const oversized = await resolveCopilotCliConfigCredential(false, deps);
+    expect(oversized.report.error).toBe("config_too_large");
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("rejects an enterprise selection before reading a plaintext token", async () => {
+    const deps = fixture({
+      lastLoggedInUser: {
+        host: "https://enterprise.example",
+        login: "selected-user",
+      },
+      authTokens: { "https://enterprise.example:selected-user": { token } },
+    });
+    const result = await resolveCopilotCliConfigCredential(false, deps);
+    expect(result.report.error).toBe("selected_host_unsupported");
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+});
 function fixture(data: unknown = { lastLoggedInUser: selected }) {
   return {
     environment: {} as Record<string, string | undefined>,
@@ -35,7 +166,9 @@ describe("Copilot CLI selected Keychain item", () => {
     const deps = fixture({
       lastLoggedInUser: selected,
       loggedInUsers: [selected, { ...selected, login: "other-user" }],
-      copilotTokens: { "https://github.com:other-user": "must-not-use" },
+      authTokens: {
+        "https://github.com:other-user": { token: "must-not-use" },
+      },
     });
     const result = await resolveCopilotCliCredential(options, false, deps);
     expect(result).toMatchObject({ status: "resolved", token });
@@ -100,7 +233,7 @@ describe("Copilot CLI selected Keychain item", () => {
   ])("does not fall back to an unselected user: %j", async (data) => {
     const deps = fixture({
       ...data,
-      copilotTokens: { "https://github.com:other-user": token },
+      authTokens: { "https://github.com:other-user": { token } },
     });
     const report = (await resolveCopilotCliCredential(options, false, deps))
       .report;
