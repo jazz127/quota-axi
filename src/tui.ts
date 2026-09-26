@@ -397,6 +397,11 @@ function buildLiveCard(
 
   if (provider.windows.length > 0) {
     lines.push(interior([], border));
+    const resetsWindow =
+      provider.provider === "codex"
+        ? (provider.windows.find((window) => window.id === "weekly") ??
+          provider.windows[provider.windows.length - 1])
+        : undefined;
     for (const window of provider.windows) {
       lines.push(
         interior(
@@ -405,9 +410,7 @@ function buildLiveCard(
             generatedAtMs,
             provider.windows,
             show,
-            provider.provider === "codex" && window.id === "weekly"
-              ? provider.resetsAvailable
-              : undefined,
+            window === resetsWindow ? provider.resetsAvailable : undefined,
           ),
           border,
         ),
