@@ -402,7 +402,7 @@ function buildLiveCard(
         ? (provider.windows.find((window) => window.id === "weekly") ??
           [...provider.windows]
             .reverse()
-            .find((window) => window.kind !== "model") ??
+            .find((window) => CODEX_ACCOUNT_WINDOW_ID.test(window.id)) ??
           provider.windows[provider.windows.length - 1])
         : undefined;
     for (const window of provider.windows) {
@@ -672,6 +672,8 @@ function interior(content: Line, borderStyle: StyleName): Line {
     { text: "│", style: borderStyle },
   ];
 }
+
+const CODEX_ACCOUNT_WINDOW_ID = /^(?:(?:five_hour|weekly)(?:_\d+)?$|window:)/;
 
 function windowRow(
   window: QuotaWindow,
