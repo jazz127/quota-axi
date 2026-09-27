@@ -131,7 +131,7 @@ export function parseResetPrediction(
   switch (source) {
     case "codex-reset": {
       if (!fresh(root.updated_at, now, 15 * 60_000)) return undefined;
-      return percentage(object(root.probabilities)?.rounded_24h);
+      return percentage(object(root.probabilities)?.model_24h);
     }
     case "lunarwerx": {
       if (root.apiVersion !== "1" || !fresh(root.generatedAt, now, 15 * 60_000))
