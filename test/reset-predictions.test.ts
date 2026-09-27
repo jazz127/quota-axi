@@ -35,7 +35,17 @@ describe("third-party Codex reset forecasts", () => {
     expect(
       parseResetPrediction(
         "codex-reset",
-        { probabilities: { rounded_24h: 0 } },
+        { updated_at: new Date(CAPTURED_AT).toISOString(), probabilities: {} },
+        CAPTURED_AT,
+      ),
+    ).toBeUndefined();
+    expect(
+      parseResetPrediction(
+        "codex-reset",
+        {
+          updated_at: new Date(CAPTURED_AT).toISOString(),
+          probabilities: { model_24h: 101, rounded_24h: 45 },
+        },
         CAPTURED_AT,
       ),
     ).toBeUndefined();
@@ -81,6 +91,23 @@ describe("third-party Codex reset forecasts", () => {
         CAPTURED_AT,
       ),
     ).toBeUndefined();
+  });
+
+  it("uses Codex Reset's model estimate instead of its rounded headline", () => {
+    expect(
+      parseResetPrediction(
+        "codex-reset",
+        {
+          updated_at: new Date(CAPTURED_AT).toISOString(),
+          probabilities: {
+            model_24h: 17,
+            rounded_24h: 45,
+            tease_floor_24h: 45,
+          },
+        },
+        CAPTURED_AT,
+      ),
+    ).toBe(17);
   });
 
   it("counts only answering sources and says unavailable when none answers", () => {
@@ -136,7 +163,7 @@ describe("third-party Codex reset forecasts", () => {
               }
             : {
                 updated_at: new Date(CAPTURED_AT).toISOString(),
-                probabilities: { rounded_24h: 50 },
+                probabilities: { model_24h: 50, rounded_24h: 50 },
               },
         ),
         { status: 200 },
