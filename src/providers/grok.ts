@@ -294,16 +294,6 @@ async function fetchQuotaWithDependencies(
     selection,
     refreshAttempt,
   );
-  for (const attempt of attempts) {
-    const diagnostic = consumerAuthDiagnostics.get(attempt.source);
-    if (
-      diagnostic &&
-      attempt.status === "skipped" &&
-      attempt.error === MODEL_AUTH_PROBE_LIVE
-    ) {
-      attempt.error = `${MODEL_AUTH_PROBE_LIVE} (consumer quota ${diagnostic})`;
-    }
-  }
   const transientError = selection.transientError;
   const retryAfter = selection.retryAfter;
   const cliRefreshNeeded = selection.results.some(

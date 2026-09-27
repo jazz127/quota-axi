@@ -999,7 +999,7 @@ describe("Grok auth discovery", () => {
         {
           source: "web",
           status: "skipped",
-          error: "model_auth_probe_live (consumer quota HTTP 403)",
+          error: "model_auth_probe_live",
           credentialPresent: true,
         },
         {
@@ -1397,7 +1397,7 @@ describe("Grok expired access-token classification", () => {
       expect.objectContaining({
         source: "web",
         status: "skipped",
-        error: "model_auth_probe_live (consumer quota HTTP 403)",
+        error: "model_auth_probe_live",
         credentialPresent: true,
       }),
     );
@@ -1829,7 +1829,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
         {
           source: "pi:xai",
           status: "skipped",
-          error: "model_auth_probe_live (consumer quota HTTP 403)",
+          error: "model_auth_probe_live",
           credentialPresent: true,
         },
       ],
@@ -2007,7 +2007,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       {
         source: "web",
         status: "skipped",
-        error: "model_auth_probe_live (consumer quota HTTP 403)",
+        error: "model_auth_probe_live",
         credentialPresent: true,
         degraded: false,
       },
