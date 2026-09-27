@@ -539,7 +539,7 @@ describe("Grok consumer quota acquisition", () => {
   });
 
   it.each([
-    [16, "auth_required", "Grok sign-in required"],
+    [16, "auth_required", "Grok sign-in required (gRPC 16)"],
     [8, "rate_limited", "Grok quota endpoint rate limited"],
     [7, "error", "Grok quota unavailable"],
     [13, "error", "Grok quota unavailable"],
@@ -566,6 +566,79 @@ describe("Grok consumer quota acquisition", () => {
       expect(result.state.error).not.toContain("private-provider-diagnostic");
     },
   );
+
+  it.each([
+    [401, {}, "Grok sign-in required (HTTP 401; server present)"],
+    [
+      403,
+      { "cf-mitigated": "challenge-secret" },
+      "Grok sign-in required (HTTP 403; cf-mitigated present; server present)",
+    ],
+    [403, {}, "Grok sign-in required (HTTP 403; server present)"],
+  ])(
+    "reports HTTP %i auth diagnostics without exposing response material",
+    async (httpStatus, headers, error) => {
+      writeValidAuth();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response("private-body-secret", {
+              status: httpStatus,
+              headers: {
+                ...headers,
+                server: "origin-server-secret",
+              },
+            }),
+        ),
+      );
+
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.state).toMatchObject({ status: "auth_required", error });
+      expect(result.state.error).toContain("server present");
+      expect(result.state.error).not.toContain("challenge-secret");
+      expect(result.state.error).not.toContain("origin-server-secret");
+      expect(result.state.error).not.toContain("private-body-secret");
+      expect(JSON.stringify(result)).not.toContain("challenge-secret");
+      expect(JSON.stringify(result)).not.toContain("origin-server-secret");
+      expect(JSON.stringify(result)).not.toContain("private-body-secret");
+    },
+  );
+
+  it("reports gRPC auth status and header presence without exposing values", async () => {
+    writeValidAuth();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        grpcResponse(new Uint8Array(), {
+          headers: {
+            "grpc-status": "16",
+            "grpc-message": "private-grpc-message",
+            "cf-mitigated": "challenge-secret",
+            server: "origin-server-secret",
+          },
+        }),
+      ),
+    );
+
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+
+    expect(result.state).toMatchObject({
+      status: "auth_required",
+      error:
+        "Grok sign-in required (gRPC 16; cf-mitigated present; server present)",
+    });
+    expect(JSON.stringify(result)).not.toContain("challenge-secret");
+    expect(JSON.stringify(result)).not.toContain("origin-server-secret");
+    expect(JSON.stringify(result)).not.toContain("private-grpc-message");
+  });
 
   it.each([
     ["trailer", "OAuth access token expired"],
@@ -601,7 +674,7 @@ describe("Grok consumer quota acquisition", () => {
 
       expect(result.state).toMatchObject({
         status: "auth_required",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (gRPC 7)",
       });
       expect(result.state.error).not.toContain(diagnostic);
     },
@@ -711,8 +784,8 @@ describe("Grok consumer quota acquisition", () => {
   });
 
   it.each([
-    [401, "auth_required", "Grok sign-in required"],
-    [403, "auth_required", "Grok sign-in required"],
+    [401, "auth_required", "Grok sign-in required (HTTP 401)"],
+    [403, "auth_required", "Grok sign-in required (HTTP 403)"],
     [503, "error", "Grok quota unavailable"],
   ])("classifies HTTP %i safely", async (httpStatus, status, error) => {
     writeValidAuth();
@@ -919,13 +992,14 @@ describe("Grok auth discovery", () => {
       state: {
         status: "unavailable",
         authStatus: "usable",
-        error: "Grok model access available; quota unavailable",
+        error:
+          "Grok model access available; quota unavailable (consumer quota HTTP 403)",
       },
       attempts: [
         {
           source: "web",
           status: "skipped",
-          error: "model_auth_probe_live",
+          error: "model_auth_probe_live (consumer quota HTTP 403)",
           credentialPresent: true,
         },
         {
@@ -1173,7 +1247,7 @@ describe("Grok expired access-token classification", () => {
         {
           source: "web",
           status: "failed",
-          error: "Grok sign-in required",
+          error: "Grok sign-in required (HTTP 403)",
         },
         {
           source: "pi:xai",
@@ -1273,7 +1347,8 @@ describe("Grok expired access-token classification", () => {
     expect(result.state).toMatchObject({
       status: "unavailable",
       authStatus: "usable",
-      error: "Grok model access available; quota unavailable",
+      error:
+        "Grok model access available; quota unavailable (consumer quota HTTP 403)",
     });
     expect(result.state.reason).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain("expired-access-token");
@@ -1315,13 +1390,14 @@ describe("Grok expired access-token classification", () => {
 
     expect(result.state).toMatchObject({
       authStatus: "usable",
-      error: "Grok model access available; quota unavailable",
+      error:
+        "Grok model access available; quota unavailable (consumer quota HTTP 403)",
     });
     expect(result.attempts).toContainEqual(
       expect.objectContaining({
         source: "web",
         status: "skipped",
-        error: "model_auth_probe_live",
+        error: "model_auth_probe_live (consumer quota HTTP 403)",
         credentialPresent: true,
       }),
     );
@@ -1400,14 +1476,14 @@ describe("Grok expired access-token classification", () => {
       source: "unavailable",
       state: {
         status: "auth_required",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (HTTP 403)",
         authStatus: "unusable",
       },
       attempts: [
         {
           source: "web",
           status: "failed",
-          error: "Grok sign-in required",
+          error: "Grok sign-in required (HTTP 403)",
         },
         {
           source: "pi:xai",
@@ -1536,7 +1612,7 @@ describe("Grok expired access-token classification", () => {
         {
           source: "web",
           status: "failed",
-          error: "Grok sign-in required",
+          error: "Grok sign-in required (HTTP 403)",
         },
         {
           source: "pi:xai",
@@ -1612,7 +1688,7 @@ describe("Grok expired access-token classification", () => {
       {
         source: "web",
         status: "failed",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (HTTP 403)",
       },
       {
         source: "pi:xai",
@@ -1710,12 +1786,12 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     expect(result.state).toMatchObject({
       status: "auth_required",
       authStatus: "unusable",
-      error: "Grok sign-in required",
+      error: "Grok sign-in required (HTTP 403)",
     });
     expect(result.attempts).toContainEqual({
       source: "pi:xai",
       status: "failed",
-      error: "Grok sign-in required",
+      error: "Grok sign-in required (HTTP 403)",
       credentialPresent: true,
     });
   });
@@ -1741,7 +1817,8 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       state: {
         status: "unavailable",
         authStatus: "usable",
-        error: "Grok model access available; quota unavailable",
+        error:
+          "Grok model access available; quota unavailable (consumer quota HTTP 403)",
       },
       attempts: [
         {
@@ -1752,7 +1829,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
         {
           source: "pi:xai",
           status: "skipped",
-          error: "model_auth_probe_live",
+          error: "model_auth_probe_live (consumer quota HTTP 403)",
           credentialPresent: true,
         },
       ],
@@ -1930,7 +2007,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       {
         source: "web",
         status: "skipped",
-        error: "model_auth_probe_live",
+        error: "model_auth_probe_live (consumer quota HTTP 403)",
         credentialPresent: true,
         degraded: false,
       },
@@ -2094,14 +2171,14 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     expect(result.state.authStatus).toBe("usable");
     expect(result.state.status).toBe("unavailable");
     expect(result.state.error).toBe(
-      "Grok model access available; quota unavailable",
+      "Grok model access available; quota unavailable (consumer quota HTTP 403)",
     );
     expect(result.state.reason).toBeUndefined();
     expect(result.attempts).toEqual([
       {
         source: "web",
         status: "failed",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (HTTP 403)",
       },
       {
         source: "pi:xai",
@@ -2183,7 +2260,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     expect(present.grok?.state.remedyCommand).toBe("grok");
     expect(present.help).toContain(grokRefreshHelp);
     expect(present.toon).toContain(
-      "grok,all,unavailable,Grok model access available; quota unavailable · reason credentials_expired (auth usable),grok",
+      "grok,all,unavailable,Grok model access available; quota unavailable (consumer quota HTTP 403) · reason credentials_expired (auth usable),grok",
     );
   });
 
@@ -2523,7 +2600,8 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     expect(result.state).toMatchObject({
       status: "unavailable",
       authStatus: "usable",
-      error: "Grok model access available; quota unavailable",
+      error:
+        "Grok model access available; quota unavailable (consumer quota HTTP 403)",
     });
     expect(result.state.reason).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain("expired-pi-access");
@@ -2563,7 +2641,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       {
         source: "pi:xai",
         status: "failed",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (HTTP 403)",
         credentialPresent: true,
       },
     ]);
@@ -2614,7 +2692,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       {
         source: "web",
         status: "failed",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (HTTP 403)",
       },
       {
         source: "pi:xai",
@@ -2677,7 +2755,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
 
     expect(result.state).toMatchObject({
       status: "auth_required",
-      error: "Grok sign-in required",
+      error: "Grok sign-in required (HTTP 403)",
       authStatus: "unusable",
     });
     expect(result.state.reason).toBeUndefined();
@@ -2939,7 +3017,8 @@ describe("Grok cache provenance", () => {
         status: "unavailable",
         stale: false,
         authStatus: "usable",
-        error: "Grok model access available; quota unavailable",
+        error:
+          "Grok model access available; quota unavailable (consumer quota HTTP 403)",
       },
     });
   });
@@ -3113,7 +3192,7 @@ describe("Grok delegated credential refresh", () => {
       {
         source: "web",
         status: "failed",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (HTTP 401)",
       },
       { source: "grok-cli-refresh", status: "success" },
       { source: "web", status: "success" },
@@ -3170,7 +3249,7 @@ describe("Grok delegated credential refresh", () => {
       {
         source: "web",
         status: "failed",
-        error: "Grok sign-in required",
+        error: "Grok sign-in required (HTTP 401)",
       },
       { source: "grok-cli-refresh", status: "success" },
       {

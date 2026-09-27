@@ -237,10 +237,17 @@ async function fetchQuotaWithDependencies(
     (candidate) => candidate.source === PI_XAI_CREDENTIAL_SOURCE,
   );
   let consumerTransient = false;
+  const consumerAuthDiagnostics = new Map<string, string>();
   const attempt = async (
     candidate: SelectionCandidate<GrokAttemptCredential>,
   ) => {
-    const outcome = await attemptGrokCandidate(candidate.credential);
+    const outcome = await attemptGrokCandidate(
+      candidate.credential,
+      (diagnostic) => {
+        if (!consumerAuthDiagnostics.has(candidate.source))
+          consumerAuthDiagnostics.set(candidate.source, diagnostic);
+      },
+    );
     if (outcome.kind === "transient") {
       consumerTransient = outcome.operation === "consumer_quota";
     }
@@ -287,6 +294,16 @@ async function fetchQuotaWithDependencies(
     selection,
     refreshAttempt,
   );
+  for (const attempt of attempts) {
+    const diagnostic = consumerAuthDiagnostics.get(attempt.source);
+    if (
+      diagnostic &&
+      attempt.status === "skipped" &&
+      attempt.error === MODEL_AUTH_PROBE_LIVE
+    ) {
+      attempt.error = `${MODEL_AUTH_PROBE_LIVE} (consumer quota ${diagnostic})`;
+    }
+  }
   const transientError = selection.transientError;
   const retryAfter = selection.retryAfter;
   const cliRefreshNeeded = selection.results.some(
@@ -351,7 +368,7 @@ async function fetchQuotaWithDependencies(
         error:
           transientError ??
           (selection.outcome === "live_no_quota"
-            ? GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR
+            ? modelAuthWithoutQuotaError(consumerAuthDiagnostics)
             : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR),
         retryAfter,
         sourcesTried: sourceNames(attempts),
@@ -370,7 +387,13 @@ async function fetchQuotaWithDependencies(
   } else if (piResolution.status === "error") {
     finalError = GROK_PI_CREDENTIAL_RESOLUTION_ERROR;
   } else {
-    finalError = GROK_SIGN_IN_REQUIRED_ERROR;
+    finalError =
+      selection.results.find(
+        (result) =>
+          result.outcome === "rejected" &&
+          result.error !== undefined &&
+          isDefinitiveGrokAuthError(result.error),
+      )?.error ?? GROK_SIGN_IN_REQUIRED_ERROR;
   }
 
   const cached = readCachedProvider("grok");
@@ -380,7 +403,7 @@ async function fetchQuotaWithDependencies(
     sourceNames(attempts),
     attempts,
     {
-      definitive: finalError === GROK_SIGN_IN_REQUIRED_ERROR,
+      definitive: isDefinitiveGrokAuthError(finalError),
       retire: () => retireCachedSlot("grok"),
     },
   );
@@ -505,6 +528,7 @@ function mergeIndependentSelections<R>(
 
 async function attemptGrokCandidate(
   payload: GrokAttemptCredential,
+  onConsumerAuthFailure?: (diagnostic: string) => void,
 ): Promise<GrokAttemptOutcome> {
   if (payload.kind === "cli" || payload.kind === "pi-credits") {
     try {
@@ -521,6 +545,7 @@ async function attemptGrokCandidate(
         };
       }
       if (isDefinitiveGrokAuthError(message)) {
+        onConsumerAuthFailure?.(grokAuthFailureDetailsFromError(message));
         if (payload.credentials.modelProbeUrl) {
           const probe = await probeGrokModelAccess(
             payload.credentials.modelProbeUrl,
@@ -541,6 +566,22 @@ async function attemptGrokCandidate(
   }
   // Pi API keys authenticate xAI model calls, not grok.com consumer credits.
   return { kind: "live_no_quota" };
+}
+
+function modelAuthWithoutQuotaError(
+  diagnostics: ReadonlyMap<string, string>,
+): string {
+  const diagnostic = diagnostics.values().next().value as string | undefined;
+  return diagnostic
+    ? `${GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR} (consumer quota ${diagnostic})`
+    : GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR;
+}
+
+function grokAuthFailureDetailsFromError(error: string): string {
+  const start = error.indexOf(" (");
+  return start >= 0 && error.endsWith(")")
+    ? error.slice(start + 2, -1)
+    : "authentication rejected";
 }
 
 /**
@@ -577,10 +618,15 @@ async function probeGrokModelAccess(
             : "Grok model access probe unavailable",
       };
     }
+    const authError = grokAuthFailureError(
+      response.status,
+      response.headers,
+      "HTTP",
+    );
     await response.body?.cancel().catch(() => undefined);
     if (response.ok) return { kind: "live_no_quota" };
     if (response.status === 401 || response.status === 403) {
-      return { kind: "rejected", error: GROK_SIGN_IN_REQUIRED_ERROR };
+      return { kind: "rejected", error: authError };
     }
     if (response.status === 429) {
       return {
@@ -849,7 +895,10 @@ function grokStatusForAuthFailure(
 }
 
 function isDefinitiveGrokAuthError(error: string): boolean {
-  return error === GROK_SIGN_IN_REQUIRED_ERROR;
+  return (
+    error === GROK_SIGN_IN_REQUIRED_ERROR ||
+    error.startsWith(`${GROK_SIGN_IN_REQUIRED_ERROR} (`)
+  );
 }
 
 export function normalizeGrokConsumerPayload(
@@ -973,6 +1022,7 @@ async function fetchGrokConsumerQuota(
     throwForGrpcStatus(
       response.headers.get("grpc-status"),
       response.headers.get("grpc-message"),
+      response.headers,
     );
 
     let bytes: Uint8Array;
@@ -985,7 +1035,7 @@ async function fetchGrokConsumerQuota(
       throw new SafeGrokError("Grok quota unavailable");
     }
 
-    const payload = decodeGrpcWebPayload(bytes);
+    const payload = decodeGrpcWebPayload(bytes, response.headers);
     return normalizeGrokConsumerPayload(payload, credentials);
   } finally {
     clearTimeout(timer);
@@ -1027,7 +1077,10 @@ async function readBoundedBody(response: Response): Promise<Uint8Array> {
   return bytes;
 }
 
-function decodeGrpcWebPayload(bytes: Uint8Array): Uint8Array {
+function decodeGrpcWebPayload(
+  bytes: Uint8Array,
+  responseHeaders?: Headers,
+): Uint8Array {
   if (bytes.length === 0) throw new ProtocolError();
   if (!looksFramed(bytes[0])) return bytes;
 
@@ -1059,6 +1112,7 @@ function decodeGrpcWebPayload(bytes: Uint8Array): Uint8Array {
       throwForGrpcStatus(
         trailers.get("grpc-status") ?? null,
         trailers.get("grpc-message") ?? null,
+        responseHeaders,
       );
     } else {
       if (trailerSeen || dataFrames.length > 0) throw new ProtocolError();
@@ -1092,14 +1146,16 @@ function parseTrailerFields(bytes: Uint8Array): Map<string, string> {
 function throwForGrpcStatus(
   value: string | null,
   message: string | null = null,
+  headers?: Headers,
 ): void {
   if (value === null) return;
   if (!/^(?:[0-9]|1[0-6])$/.test(value)) throw new ProtocolError();
   const status = Number(value);
   if (status === 0) return;
-  if (status === 16) throw new SafeGrokError(GROK_SIGN_IN_REQUIRED_ERROR);
+  if (status === 16)
+    throw new SafeGrokError(grokAuthFailureError(status, headers, "gRPC"));
   if (status === 7 && grpcMessageIndicatesAuthFailure(message))
-    throw new SafeGrokError(GROK_SIGN_IN_REQUIRED_ERROR);
+    throw new SafeGrokError(grokAuthFailureError(status, headers, "gRPC"));
   if (status === 8) throw new RateLimitError();
   throw new SafeGrokError("Grok quota unavailable");
 }
@@ -1128,6 +1184,17 @@ function grpcMessageIndicatesAuthFailure(value: string | null): boolean {
       message,
     )
   );
+}
+
+function grokAuthFailureError(
+  status: number,
+  headers: Headers | undefined,
+  protocol: "HTTP" | "gRPC",
+): string {
+  const details = [`${protocol} ${status}`];
+  if (headers?.has("cf-mitigated")) details.push("cf-mitigated present");
+  if (headers?.has("server")) details.push("server present");
+  return `${GROK_SIGN_IN_REQUIRED_ERROR} (${details.join("; ")})`;
 }
 
 function scanMessage(bytes: Uint8Array): ProtoField[] {
@@ -1366,7 +1433,9 @@ function grokHomeDir(): string {
 
 function rejectUnusableUsageResponse(response: Response): void {
   if (response.status === 401 || response.status === 403) {
-    throw new SafeGrokError(GROK_SIGN_IN_REQUIRED_ERROR);
+    throw new SafeGrokError(
+      grokAuthFailureError(response.status, response.headers, "HTTP"),
+    );
   }
   if (response.status === 429) {
     throw new RateLimitError(
