@@ -237,17 +237,23 @@ async function fetchQuotaWithDependencies(
     (candidate) => candidate.source === PI_XAI_CREDENTIAL_SOURCE,
   );
   let consumerTransient = false;
-  const consumerAuthDiagnostics = new Map<string, string>();
+  const liveConsumerDiagnostics = new Map<string, string | undefined>();
   const attempt = async (
     candidate: SelectionCandidate<GrokAttemptCredential>,
   ) => {
+    let consumerDiagnostic: string | undefined;
     const outcome = await attemptGrokCandidate(
       candidate.credential,
       (diagnostic) => {
-        if (!consumerAuthDiagnostics.has(candidate.source))
-          consumerAuthDiagnostics.set(candidate.source, diagnostic);
+        consumerDiagnostic = diagnostic;
       },
     );
+    if (
+      outcome.kind === "live_no_quota" &&
+      !liveConsumerDiagnostics.has(candidate.source)
+    ) {
+      liveConsumerDiagnostics.set(candidate.source, consumerDiagnostic);
+    }
     if (outcome.kind === "transient") {
       consumerTransient = outcome.operation === "consumer_quota";
     }
@@ -270,6 +276,7 @@ async function fetchQuotaWithDependencies(
     refreshAttempt = refresh.attempt;
     if (refresh.state !== undefined) {
       cliState = refresh.state;
+      liveConsumerDiagnostics.clear();
       cliSelection = await selectCredential(
         cliCandidatesFor(cliState),
         attempt,
@@ -358,7 +365,10 @@ async function fetchQuotaWithDependencies(
         error:
           transientError ??
           (selection.outcome === "live_no_quota"
-            ? modelAuthWithoutQuotaError(consumerAuthDiagnostics)
+            ? modelAuthWithoutQuotaError(
+                selection.winner &&
+                  liveConsumerDiagnostics.get(selection.winner.source),
+              )
             : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR),
         retryAfter,
         sourcesTried: sourceNames(attempts),
@@ -535,12 +545,19 @@ async function attemptGrokCandidate(
         };
       }
       if (isDefinitiveGrokAuthError(message)) {
-        onConsumerAuthFailure?.(grokAuthFailureDetailsFromError(message));
+        const consumerDiagnostic = grokAuthFailureDetailsFromError(message);
+        onConsumerAuthFailure?.(consumerDiagnostic);
         if (payload.credentials.modelProbeUrl) {
           const probe = await probeGrokModelAccess(
             payload.credentials.modelProbeUrl,
             payload.credentials.key,
           );
+          if (probe.kind === "rejected") {
+            return {
+              kind: "rejected",
+              error: `${GROK_SIGN_IN_REQUIRED_ERROR} (consumer quota ${consumerDiagnostic}; model catalog ${probe.error})`,
+            };
+          }
           return probe.kind === "transient"
             ? { ...probe, operation: "model_auth" }
             : probe;
@@ -558,10 +575,7 @@ async function attemptGrokCandidate(
   return { kind: "live_no_quota" };
 }
 
-function modelAuthWithoutQuotaError(
-  diagnostics: ReadonlyMap<string, string>,
-): string {
-  const diagnostic = diagnostics.values().next().value as string | undefined;
+function modelAuthWithoutQuotaError(diagnostic: string | undefined): string {
   return diagnostic
     ? `${GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR} (consumer quota ${diagnostic})`
     : GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR;
@@ -608,15 +622,17 @@ async function probeGrokModelAccess(
             : "Grok model access probe unavailable",
       };
     }
-    const authError = grokAuthFailureError(
-      response.status,
-      response.headers,
-      "HTTP",
-    );
     await response.body?.cancel().catch(() => undefined);
     if (response.ok) return { kind: "live_no_quota" };
     if (response.status === 401 || response.status === 403) {
-      return { kind: "rejected", error: authError };
+      return {
+        kind: "rejected",
+        error: grokAuthFailureDetails(
+          response.status,
+          response.headers,
+          "HTTP",
+        ),
+      };
     }
     if (response.status === 429) {
       return {
@@ -1181,10 +1197,18 @@ function grokAuthFailureError(
   headers: Headers | undefined,
   protocol: "HTTP" | "gRPC",
 ): string {
+  return `${GROK_SIGN_IN_REQUIRED_ERROR} (${grokAuthFailureDetails(status, headers, protocol)})`;
+}
+
+function grokAuthFailureDetails(
+  status: number,
+  headers: Headers | undefined,
+  protocol: "HTTP" | "gRPC",
+): string {
   const details = [`${protocol} ${status}`];
   if (headers?.has("cf-mitigated")) details.push("cf-mitigated present");
   if (headers?.has("server")) details.push("server present");
-  return `${GROK_SIGN_IN_REQUIRED_ERROR} (${details.join("; ")})`;
+  return details.join("; ");
 }
 
 function scanMessage(bytes: Uint8Array): ProtoField[] {
