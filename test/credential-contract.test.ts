@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { providerPresence } from "../src/lib/source-attempts.js";
 import type { ProviderQuota, SourceAttempt } from "../src/types.js";
 
 /**
@@ -21,7 +22,7 @@ import type { ProviderQuota, SourceAttempt } from "../src/types.js";
  */
 
 type PiProviderCase = {
-  provider: "codex" | "kimi" | "grok" | "opencode-go";
+  provider: "codex" | "kimi" | "grok" | "opencode-go" | "mimo";
   /** Property name Pi stores this provider's credential under. */
   piKey: string;
   /** Attempt source name the adapter reports for its Pi store. */
@@ -79,6 +80,11 @@ const CASES: PiProviderCase[] = [
     piKey: "opencode-go",
     piSource: "pi:opencode-go",
   },
+  {
+    provider: "mimo",
+    piKey: "xiaomi",
+    piSource: "pi:xiaomi",
+  },
 ];
 
 /** Present-but-unusable Pi entries: none of these is an absent source. */
@@ -106,6 +112,9 @@ const ENV_KEYS = [
   "ELEVENLABS_API_KEY",
   "META_API_KEY",
   "XDG_CONFIG_HOME",
+  "MIMO_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "OPENROUTER_API_KEY",
   "WINDSURF_API_KEY",
   "WINDSURF_API_SERVER_URL",
   "QUOTA_AXI_OPENCODE_GO_PI_AUTH",
@@ -145,6 +154,9 @@ beforeEach(() => {
   delete process.env.GROK_AUTH_PATH;
   delete process.env.ELEVENLABS_API_KEY;
   delete process.env.META_API_KEY;
+  delete process.env.MIMO_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
   process.env.XDG_CONFIG_HOME = join(tempDir, "config");
   delete process.env.WINDSURF_API_KEY;
   delete process.env.WINDSURF_API_SERVER_URL;
@@ -247,6 +259,102 @@ describe("credential source contract", { timeout: 30_000 }, () => {
         expect(api.bearers).toContain(`Bearer ${expiredProbe.token}`);
       });
     }
+  });
+
+  /**
+   * The env axis of the env-plus-Pi surfaces. An unset or blank variable is
+   * absence; a non-blank value that is not a usable literal secret is a
+   * credential that exists - reported as the invalid credential, never folded
+   * away as "not set up", and never resolved.
+   */
+  describe("mimo env axis", () => {
+    const source = "env:MIMO_API_KEY";
+
+    it("leaves an unset variable unmarked, so nothing reads as degraded", async () => {
+      stubRejectingApi();
+
+      const result = await readQuota("mimo");
+
+      const attempts = attemptsFor(result, source);
+      expect(attempts.length).toBeGreaterThan(0);
+      for (const attempt of attempts) {
+        expect(attempt.credentialPresent).toBeUndefined();
+      }
+      expect(result.state.status).toBe("auth_required");
+      expect(providerPresence(result)).toBe("absent");
+    });
+
+    it.each([
+      ["an environment reference", "$MIMO_API_KEY"],
+      ["a command reference", "!op read op://vault/key"],
+      ["a control byte", "mimo-\u0007-fixture"],
+    ])(
+      "marks a present but unusable variable (%s) as a credential that exists",
+      async (_label, value) => {
+        process.env.MIMO_API_KEY = value;
+        stubRejectingApi();
+
+        const result = await readQuota("mimo");
+
+        const attempts = attemptsFor(result, source);
+        expect(attempts.length).toBeGreaterThan(0);
+        for (const attempt of attempts) {
+          expect(attempt.credentialPresent).toBe(true);
+        }
+        expect(result.state).toMatchObject({
+          status: "auth_required",
+          error: "mimo_credential_invalid",
+        });
+        expect(providerPresence(result)).toBe("attention");
+      },
+    );
+  });
+
+  describe.each([
+    ["deepseek", "env:DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"],
+    ["openrouter", "env:OPENROUTER_API_KEY", "OPENROUTER_API_KEY"],
+  ])("%s env axis", (provider, source, envVar) => {
+    const invalidError = `${provider}_credential_invalid`;
+
+    it("leaves an unset variable unmarked, so nothing reads as degraded", async () => {
+      stubRejectingApi();
+
+      const result = await readQuota(provider);
+
+      const attempts = attemptsFor(result, source);
+      expect(attempts.length).toBeGreaterThan(0);
+      for (const attempt of attempts) {
+        expect(attempt.credentialPresent).toBeUndefined();
+      }
+      expect(result.state.status).toBe("auth_required");
+      expect(providerPresence(result)).toBe("absent");
+    });
+
+    it.each([
+      ["an environment reference", "${" + envVar + "}"],
+      ["a command reference", "!op read op://vault/key"],
+      ["a control byte", "key-\u0007-fixture"],
+    ])(
+      "reports a present but unusable variable (%s) as the invalid credential",
+      async (_label, value) => {
+        process.env[envVar] = value;
+        stubRejectingApi();
+
+        const result = await readQuota(provider);
+
+        const attempts = attemptsFor(result, source);
+        expect(attempts.length).toBeGreaterThan(0);
+        for (const attempt of attempts) {
+          expect(attempt.status).toBe("failed");
+          expect(attempt.error).toBe(invalidError);
+        }
+        expect(result.state).toMatchObject({
+          status: "auth_required",
+          error: invalidError,
+        });
+        expect(providerPresence(result)).toBe("attention");
+      },
+    );
   });
 
   /**

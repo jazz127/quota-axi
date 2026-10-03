@@ -1631,6 +1631,7 @@ describe("new provider public quota output", () => {
   it("keeps registered MiMo authentication without a fabricated quota scope", async () => {
     useTempCache();
     process.env.MIMO_API_KEY = "synthetic-mimo-cli-key";
+    process.env.PI_CODING_AGENT_DIR = join(tempDir!, "pi-agent-empty");
 
     const json = JSON.parse(
       await capture(["--provider", "mimo", "--json", "--full"]),
@@ -1658,6 +1659,7 @@ describe("new provider public quota output", () => {
   it("reports missing registered MiMo authentication through JSON", async () => {
     useTempCache();
     delete process.env.MIMO_API_KEY;
+    process.env.PI_CODING_AGENT_DIR = join(tempDir!, "pi-agent-empty");
 
     const json = JSON.parse(
       await capture(["--provider", "mimo", "--json", "--full"]),
@@ -1671,7 +1673,13 @@ describe("new provider public quota output", () => {
           status: "auth_required",
           stale: false,
           error: "mimo_credential_unavailable",
-          sourcesTried: ["env:MIMO_API_KEY"],
+          sourcesTried: [
+            "env:MIMO_API_KEY",
+            "pi:xiaomi",
+            "pi:xiaomi-token-plan-sgp",
+            "pi:xiaomi-token-plan-cn",
+            "pi:xiaomi-token-plan-ams",
+          ],
         },
       }),
     ]);
