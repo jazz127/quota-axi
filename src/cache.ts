@@ -152,8 +152,9 @@ function codexAccountContextId(accountId?: string): string | undefined {
 /**
  * The verified subscription a snapshot was read from, hashed because the cache
  * holds no account identity in the clear. A symbol key carries it onto the
- * snapshot, and from there through `staleFromCache`, while keeping it off every
- * serialized surface, so a stale reading can still be recognised as the same
+ * snapshot, and from there through `staleFromCache`, while keeping it off
+ * public report serialization. The cache serializer persists the hash as
+ * `subscription`, so a stale reading can still be recognised as the same
  * subscription as a fresh sibling route.
  */
 const SUBSCRIPTION_IDENTITY = Symbol("subscriptionIdentity");
