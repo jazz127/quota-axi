@@ -16,7 +16,8 @@ export type ProviderId =
   | "openrouter"
   | "elevenlabs"
   | "devin"
-  | "muse";
+  | "muse"
+  | "higgsfield";
 
 export const PROVIDER_IDS = [
   "claude",
@@ -37,6 +38,7 @@ export const PROVIDER_IDS = [
   "elevenlabs",
   "devin",
   "muse",
+  "higgsfield",
 ] as const satisfies readonly ProviderId[];
 
 export type ProviderSource =
@@ -335,6 +337,17 @@ export type ProviderQuota = {
     remaining?: number;
     unlimited?: boolean;
     unit?: "usd" | "cny" | "credits";
+  };
+  /**
+   * PHI-safe job-outcome sample from a vendor list command. Counts only;
+   * never prompts, URLs, ids, or account identity. Restored on cache reuse
+   * the same way `credits` is; absent when the snapshot carried none.
+   */
+  jobs?: {
+    sampled: number;
+    completed: number;
+    failed: number;
+    other: number;
   };
   state: {
     status: ProviderStatus;

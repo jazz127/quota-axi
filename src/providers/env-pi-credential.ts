@@ -142,6 +142,9 @@ export type KeyCredentialFailure = {
   error: string;
 };
 
+/** The suffix `keyCredentialFailure` gives a missing source's diagnostic. */
+const ABSENT_CREDENTIAL_SUFFIX = "_credential_unavailable";
+
 export function keyCredentialFailure(
   provider: ProviderId,
   resolution: Exclude<EnvPiCredentialResolution, { status: "available" }>,
@@ -150,26 +153,30 @@ export function keyCredentialFailure(
     status: resolution.status === "error" ? "error" : "auth_required",
     error:
       resolution.status === "missing"
-        ? `${provider}_credential_unavailable`
+        ? `${provider}${ABSENT_CREDENTIAL_SUFFIX}`
         : resolution.status === "invalid"
           ? `${provider}_credential_invalid`
           : `${provider}_credential_resolution_failed`,
   };
 }
 
+function isAbsentCredentialFailure(failure: KeyCredentialFailure): boolean {
+  return failure.error.endsWith(ABSENT_CREDENTIAL_SUFFIX);
+}
+
 /**
- * A credential-resolution error outranks an earlier absence diagnostic, and an
- * empirical endpoint rejection outranks both: only a real answer or a real
- * rejection should ever name the account's state.
+ * A present-but-unusable credential outranks an earlier plain absence - the
+ * credential surface exists, so naming it `unavailable` describes the wrong
+ * failure - a credential-resolution error outranks both, and an empirical
+ * endpoint rejection outranks them: only a real answer or a real rejection
+ * should ever name the account's state.
  */
 export function preferCredentialFailure(
   current: KeyCredentialFailure | undefined,
   next: KeyCredentialFailure,
 ): KeyCredentialFailure {
-  if (
-    !current ||
-    (current.status === "auth_required" && next.status === "error")
-  )
+  if (!current || isAbsentCredentialFailure(current)) return next;
+  if (current.status === "auth_required" && next.status === "error")
     return next;
   return current;
 }
@@ -198,7 +205,10 @@ export function inspectEnvPiAuth(
             ? "error"
             : "invalid",
     ...(resolution.status === "error" || resolution.status === "invalid"
-      ? { error: keyCredentialFailure(provider, resolution).error }
+      ? {
+          error: keyCredentialFailure(provider, resolution).error,
+          credentialPresent: true,
+        }
       : {}),
   }));
   return { provider, sources };
