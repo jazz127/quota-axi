@@ -31,11 +31,11 @@ Implemented in `src/pace.ts`:
   - Quantifies how usage tracks against elapsed window time.
   - Positive values indicate usage is tracking behind the elapsed time clock (headroom remaining).
   - Negative values indicate usage is running ahead of the reset clock (burn rate higher than cycle average).
-- **Effective Usable Runway**: Aggregates all authoritative bounds to determine time until exhaustion, preserving uncertainty if any binding window lacks timing metadata. Runway is dynamic and never cached.
+- **Effective Usable Runway**: Resetless scopes, untriggered-window exceptions, and aggregate verdicts follow [README Effective usable runway](../../README.md#effective-usable-runway).
 - **Selection Signal (`effectiveAvailability[].selection`)**:
   - Computed purely from reported figures via `summarizeEffectiveSelection` in `src/pace.ts`.
   - Published field name is centralized in `SELECTION_SCALAR_KEY` in `src/types.ts`.
-  - If any bounding window lacks usable pace data, the whole scope is deemed unmeasurable (no scalar published, `unmeasurableWindowIds` listed). A not-yet-triggered zero-use window (no `resetsAt` plus zero usage) is fully available and is excluded from the weighted mean instead of blocking; when every bounding window is untriggered the scope publishes no scalar and reports `unknown` with no `unmeasurableWindowIds`.
+  - Measurability and untriggered-window handling follow [README Per-scope selection signal](../../README.md#per-scope-selection-signal).
   - **Data only**: quota-axi never routes, recommends, or ranks winners.
 
 ---
@@ -54,7 +54,7 @@ Structured into three concise decision blocks:
 
 - Every requested provider must appear in `quota[]` or `attention[]`, except providers with positive evidence of absence, which default TOON omits and counts in a single help line; `--full` and an explicit `--provider` name them.
 - `quota[]` rows preserve provider declaration order and are **never metric-sorted**.
-- `spendPriority` renders literal `unknown`, never `0`. An unknown or stale scope receives no `quota[]` row; any finite runway is preserved in `attention[]`.
+- Scalar rendering and unknown or stale scope handling follow [README Default report blocks](../../README.md#default-report-blocks).
 
 ### 2. JSON Tier Splitting (`--json` vs `--full`)
 

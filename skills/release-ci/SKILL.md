@@ -17,7 +17,7 @@ This document describes the automated release pipeline, CI workflow constraints,
   - Automatically manages version bumps, changelog generation, and release PRs.
   - `.release-please-manifest.json` was primed at `0.1.0` (the version published manually before release-please integration); release-please updates it with each release.
   - `release-please-config.json` locks `bootstrap-sha` to `9f5dc949c50ab8ac0a441be777e1c3693ee0b612` (the commit producing the published 0.1.0 package). Never alter this SHA unless correcting the published baseline.
-  - **Never Hand-Edit Generated Files**: Do not manually edit `CHANGELOG.md` or `.release-please-manifest.json`. A guard workflow (`.github/workflows/guard-generated-files.yml`) automatically rejects PRs that touch them.
+  - **Generated Files**: Ownership and guard requirements follow [CONTRIBUTING Repo conventions](../../CONTRIBUTING.md#repo-conventions) and [Release and gate maintenance](../../CONTRIBUTING.md#release-and-gate-maintenance).
 - **npm Publishing**:
   - Merging the release PR triggers `.github/workflows/release-please.yml` to publish to npm.
   - Uses npm's OIDC trusted-publisher flow (`id-token: write` + `--provenance`) without stored token secrets.
@@ -43,9 +43,7 @@ This document describes the automated release pipeline, CI workflow constraints,
 
 - **Contributor Workflow**: [CONTRIBUTING.md](../../CONTRIBUTING.md) defines contributor requirements, PR expectations, and exemptions.
 - **Trusted Repository Configuration**:
-  - `.no-mistakes.yaml` defines `commands.prepare` and `commands.test` (`pnpm test`), alongside `test.instructions` for post-baseline live validation.
-  - `allow_repo_commands` remains disabled so untrusted pull request branches cannot inject arbitrary commands or agents.
-  - Guarded by `test/no-mistakes-config.test.ts`.
+  - Command ownership, the bounded offline validation runbook, and trusted-copy requirements follow [CONTRIBUTING Repo conventions](../../CONTRIBUTING.md#repo-conventions) and [Release and gate maintenance](../../CONTRIBUTING.md#release-and-gate-maintenance).
 - **Composite Action Pinning**:
   - `.github/workflows/no-mistakes-required.yml` delegates enforcement to `kunchenguid/no-mistakes/.github/actions/require-no-mistakes` pinned to an immutable commit SHA.
   - The pin is bumped only via deliberate, standalone pull requests.

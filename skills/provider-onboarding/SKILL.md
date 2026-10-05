@@ -31,7 +31,7 @@ When adding a new provider or migrating an existing adapter:
    - Enroll stored-expired credentials instead of skipping them.
    - Never infer liveness from presence alone.
    - Classify probe outcomes as `usable`, `live_no_quota`, `definitively_rejected`, or `transient`.
-   - Only a first-party HTTP 401 or 403 is an authentication verdict. Server errors, rate limits, network timeouts, or schema mismatches are request failures, not auth verdicts.
+   - Authentication verdicts and provider-specific rejection signals follow [README Provider state](../../README.md#provider-state) and [Provider notes](../../README.md#provider-notes).
 
 3. **Handover only after definitive credential failure**:
    - An absent source is never marked degraded.

@@ -87,9 +87,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 ## 6. Moonshot Kimi (`kimi`)
 
 - **Quota Windows**:
-  - `/usages` returns a map (`limit_5h`, `limit_7d`, `limit_month_total`, `limit_month_code`) or legacy `usage` + `limits[]`. Ratios are read strictly from `used_ratio`.
-  - `limit_month_code` is the code-typed share of `limit_month_total`, not a separate cap. It carries `percentUsed` and `shareOf: month_total`. It never bounds a scope or derives a remaining allowance. Default TOON formats it as an attention `share` row; TUI displays percent used of parent.
-  - Any declared entry lacking a usable ratio is marked in `state.untrustedWindowIds` (`usages:<key>`), degrading the bound to `partial`.
+  - Payload shapes, dual-shape merging, and incomplete-entry diagnostics follow [README Provider windows](../../README.md#provider-windows); scope bounds and monthly shares follow [README Quota windows](../../README.md#quota-windows).
 - **Dual Deployment Environments**:
   - `src/providers/kimi-code-config.ts` reads `config.toml` (`storage`, `key`, `oauth_host`, `base_url`).
   - Region allowlist restricts requests to Kimi Code's two official deployments (global vs mainland China). Never pair one deployment's token with another's host origin.
@@ -183,7 +181,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 
 - **Credential Source**: The installed `higgsfield` CLI (`higgsfield-cli`). `inspectAuth` reports the command present or missing without probing quota; quota-axi never reads Higgsfield credential files, never runs `higgsfield auth token`, and never publishes the account email the status payload includes.
 - **Fixed argv**: `higgsfield account status --json`, `higgsfield account transactions --json --size 100`, and `higgsfield generate list --json --size 20`, each bounded to 15 seconds. The transactions and jobs aux commands run concurrently; a failure omits that aux rather than failing the status reading and is additionally surfaced as a `degraded_source` attention row (`higgsfield-transactions` or `higgsfield-jobs`).
-- **Quota Windows**: The status payload has no limit or reset field, so a `credits` window (scope `included_credits`) is published only when the first `account transactions` page holds a `subscription credits` grant as its only positive-credit entry and the balance reconciles with that grant plus the on-page entries newer than it (within floating-point slack); otherwise the raw `credits.remaining` balance is reported with no percentage. The grant must be on the first page. No cycle is invented: pace stays `unknown`, and runway reads `exhausted_now` at zero balance and `unknown` for any positive balance, including an untouched full grant.
+- **Quota Windows**: Grant reconciliation and its rounding tolerance follow [README Higgsfield provider notes](../../README.md#provider-notes); resetless runway follows [README Effective usable runway](../../README.md#effective-usable-runway).
 - **Jobs rollup**: `generate list` entries are reduced to `jobs.{sampled,completed,failed,other}` counts; job ids, prompts, URLs, and model names are discarded. Those counts are stored with the snapshot the same way `credits` is; a snapshot that never carried jobs stays without them. Higgsfield is excluded from `--max-age` reuse because a CLI login switch is not a traced file and the status payload has no stable non-email account discriminator.
 - **Fresh reuse**: `--max-age` / `QUOTA_AXI_MAX_AGE` never serves a Higgsfield reading; every Higgsfield quota call live-reads the vendor CLI.
 - **Error handling**: A status failure classifies only from the closed sentinel set (`higgsfield_cli_unavailable`, `higgsfield_sign_in_required`, `higgsfield_status_malformed_json`, wrapped `higgsfield_status_failed`); never re-run keyword regexes over wrapped stderr.
