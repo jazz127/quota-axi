@@ -603,9 +603,13 @@ describe("quota semantics", () => {
   it("keeps a Codex model exhausted when its own window is the zero", () => {
     const result = withQuotaSemantics(
       provider("codex", [
-        window("weekly", "weekly", 0),
-        window("model:codex_bengalfox:5h", "model", 92),
-        window("model:codex_bengalfox:7d", "model", 0),
+        window("weekly", "weekly", 0, { resetsAt: weeklyResetsAt(0.5) }),
+        window("model:codex_bengalfox:5h", "model", 92, {
+          resetsAt: offsetFromGeneratedAt(9_000),
+        }),
+        window("model:codex_bengalfox:7d", "model", 0, {
+          resetsAt: weeklyResetsAt(0.5),
+        }),
       ]),
       GENERATED_AT,
     );
@@ -986,6 +990,40 @@ describe("quota semantics", () => {
       ],
     });
     expect(agy.quotaSemantics?.unresolvedWindowIds).toBeUndefined();
+
+    const fiveHoursResetsAt = (elapsedFraction: number) =>
+      new Date(
+        Date.parse(GENERATED_AT) + 18_000 * (1 - elapsedFraction) * 1000,
+      ).toISOString();
+    const agyMeasured = withQuotaSemantics(
+      provider("agy", [
+        window("gemini_5h", "session", 95, {
+          windowSeconds: 18_000,
+          resetsAt: fiveHoursResetsAt(0.5),
+        }),
+        window("gemini_weekly", "weekly", 99, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0.5),
+        }),
+        window("claude_gpt_5h", "session", 100, {
+          windowSeconds: 18_000,
+          resetsAt: fiveHoursResetsAt(0),
+        }),
+        window("claude_gpt_weekly", "weekly", 100, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0),
+        }),
+      ]),
+      GENERATED_AT,
+    );
+    for (const scope of ["gemini", "claude_gpt"]) {
+      const group = agyMeasured.quotaSemantics?.effectiveAvailability.find(
+        (item) => item.scope === scope,
+      );
+      expect(group?.selection?.status).toBe("known");
+      expect(typeof group?.selection?.[SELECTION_SCALAR_KEY]).toBe("number");
+      expect(group?.runway?.status).toBe("through_reset");
+    }
 
     const agyWeeklyOnly = withQuotaSemantics(
       provider("agy", [window("gemini_weekly", "weekly", 40)]),
@@ -1409,5 +1447,26 @@ describe("per-scope selection signal", () => {
     expect(result.state.status).toBe("stale");
     expect(result.state.stale).toBe(true);
     expect(result.quotaSemantics?.status).toBe("unknown");
+  });
+
+  it("bounds Higgsfield credits at included_credits and does not invent a model lane", () => {
+    const result = withQuotaSemantics(
+      provider("higgsfield", [window("credits", "credits", 99)]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "included_credits",
+        status: "known",
+        effectivePercentRemaining: 99,
+        boundedBy: ["credits"],
+      }),
+    ]);
+    expect(result.quotaSemantics?.effectiveAvailability).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ scope: "all_models" }),
+      ]),
+    );
   });
 });

@@ -195,6 +195,8 @@ function semanticsFor(
         provider.state.untrustedWindowIds ?? [],
         generatedAt,
       );
+    case "higgsfield":
+      return higgsfieldSemantics(provider.windows, generatedAt);
   }
 }
 
@@ -321,6 +323,30 @@ function elevenLabsSemantics(
   return knownSemantics(
     characters.length > 0
       ? [availability("included_characters", characters, generatedAt)]
+      : [],
+    description,
+  );
+}
+
+/**
+ * Higgsfield meters plan generation credits, not a coding-agent model lane.
+ * The credits window is only published when the first transactions page's sole
+ * subscription-credit grant reconciles with the reported balance (that grant
+ * plus the on-page entries newer than it), so it bounds `included_credits`
+ * rather than `all_models`. With no vendor reset, pace stays unknown; runway
+ * reads `exhausted_now` at zero balance and `unknown` for any positive balance,
+ * including an untouched full grant.
+ */
+function higgsfieldSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const credits = windows.filter(({ id }) => id === "credits");
+  const description =
+    "Higgsfield's credits window is the subscription plan's included generation-credit allowance, bounding the included_credits scope only and never a model lane, and it publishes only when the first transactions page's sole positive-credit Subscription Credits grant reconciles with the reported balance (that grant plus the on-page entries newer than it), so a zeroed published window means zero balance; with no vendor reset, pace stays unknown, and runway reads exhausted_now at zero balance and unknown for any positive balance, including an untouched full grant.";
+  return knownSemantics(
+    credits.length > 0
+      ? [availability("included_credits", credits, generatedAt)]
       : [],
     description,
   );

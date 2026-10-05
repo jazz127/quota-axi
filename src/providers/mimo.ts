@@ -152,7 +152,7 @@ async function fetchQuotaWithDependencies(
         ? { credentialPresent: true }
         : {}),
     });
-    failure = preferMimoFailure(failure, local);
+    failure = preferCredentialFailure(failure, local);
   }
 
   const final = failure ?? {
@@ -168,22 +168,6 @@ async function fetchQuotaWithDependencies(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
-}
-
-/**
- * A present-but-unusable Pi entry outranks an earlier plain absence: the
- * machine does hold a MiMo credential surface, so naming it `unavailable`
- * would describe the wrong failure. A credential-resolution error still
- * outranks both through the shared rule.
- */
-function preferMimoFailure(
-  current: KeyCredentialFailure | undefined,
-  next: KeyCredentialFailure,
-): KeyCredentialFailure {
-  if (current?.error === "mimo_credential_unavailable") {
-    if (next.error !== "mimo_credential_unavailable") return next;
-  }
-  return preferCredentialFailure(current, next);
 }
 
 async function inspectAuthWithDependencies(
