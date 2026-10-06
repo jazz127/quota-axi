@@ -333,9 +333,8 @@ function elevenLabsSemantics(
  * The credits window is only published when the first transactions page's sole
  * subscription-credit grant reconciles with the reported balance (that grant
  * plus the on-page entries newer than it), so it bounds `included_credits`
- * rather than `all_models`. With no vendor reset, pace stays unknown; runway
- * reads `exhausted_now` at zero balance and `unknown` otherwise, naming
- * `credits` in `unmeasurableWindowIds`.
+ * rather than `all_models`. Resetless runway follows the shared reset-evidence
+ * rules in `src/pace.ts`.
  */
 function higgsfieldSemantics(
   windows: QuotaWindow[],
