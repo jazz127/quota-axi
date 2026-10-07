@@ -1342,8 +1342,8 @@ export function normalizeCodexUsage(raw: unknown):
   | undefined {
   // Both the direct ChatGPT backend calls and the codex app-server RPC
   // describe the same rate-limit concepts, but the RPC surface uses
-  // camelCase field names while the HTTP backend uses snake_case; both
-  // forms are tolerated wherever they appear below.
+  // camelCase field names while the HTTP backend uses snake_case; rate-limit
+  // windows and reset counts tolerate both forms.
   if (!raw || typeof raw !== "object") return undefined;
   const data = raw as Record<string, unknown>;
   const rateLimit = resolveRateLimitContainer(data);
