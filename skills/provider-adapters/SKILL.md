@@ -12,10 +12,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 
 ## 1. Anthropic Claude (`claude`)
 
-- **Credential Sources** (evaluated in order):
-  1. `env` (`CLAUDE_CODE_OAUTH_TOKEN`): Takes top precedence because Claude Code resolves environment tokens before opening local stores. It has no `expiresAt` or refresh token; never invent either and never route it through delegated refresh. `claudeEnvOauthToken` in `src/lib/claude-profile.ts` is the single reader. `claudeCredentialContextId` includes an env marker to prevent serving stored-credential cache snapshots for environment sessions.
-  2. `oauth-file`: Reads the local profile credentials file.
-  3. `keychain`: macOS Keychain item matching Claude Code's validated user account selector. Ambiguous service-only queries are forbidden. Value reads require an existing non-secret access marker (`0600`) or `--allow-keychain-prompt`. Keychain failures (including exit 44) must never retire the cache.
+- **Credential sources and profile isolation**: Follow [README Provider notes](../../README.md#provider-notes) and [Claude profiles](../../README.md#claude-profiles).
 - **Quota Windows**:
   - Windows can include `five_hour`, `seven_day`, `seven_day_opus`, and `extra_usage`.
   - When the OAuth usage payload includes a `limits` array, that array is authoritative over top-level fields. It exposes active limits, including model-scoped limits (e.g. Fable) via `scope.model.display_name`, assigned window ID `model:<slug>`.
@@ -123,7 +120,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 - **CSRF Handling**: Loopback 401 with `missing CSRF token` is treated as `unavailable`, preserving disk cache.
 - **Stale Resets**: Readings with `resetsAt` in the past are marked stale.
 - **Safety**: Antigravity is strictly read-only: never reads memory, signs in, mutates config, or contacts unowned ports.
-- **Uninstall Detection**: Cache is retired (not served) when the `agy` CLI is absent and no Antigravity process is running. An installed-but-stopped CLI still uses the stale fallback cache.
+- **Cache retirement**: Follow the [README Antigravity provider notes](../../README.md#provider-notes).
 
 ---
 

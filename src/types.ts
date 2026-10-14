@@ -330,8 +330,8 @@ export type ProviderQuota = {
    */
   accountKeys?: string[];
   /**
-   * The local selector an expanded lane reads. Present only when the adapter
-   * names one and the report expanded; omitted from default `--json`, see
+   * The local selector the adapter resolved or an expanded lane declares.
+   * Omitted from default `--json`, see
    * `--full`.
    */
   accountLocator?: AccountLocator;
