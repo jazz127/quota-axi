@@ -627,6 +627,81 @@ describe("Antigravity provider", () => {
     },
   );
 
+  it
+    .skipIf(process.platform === "win32")
+    .each([
+      "/Applications/Google Antigravity.app/Contents/MacOS/Electron",
+      "/Users/Test User/Applications/Google Antigravity.app/Contents/MacOS/Electron",
+      '"/Applications/Antigravity IDE.app/Contents/MacOS/Electron"',
+      "/Applications/Antigravity.app/Contents/Frameworks/Antigravity Helper.app/Contents/MacOS/Antigravity Helper --type=renderer",
+      "/usr/share/antigravity/antigravity --no-sandbox",
+    ])(
+    "retains quota while desktop %s has no language-server endpoint",
+    async (command) => {
+      const requestJson = vi.fn();
+      const onExec = vi.fn();
+      const runtime = runtimeWith({
+        ps: `123 ${command}\n`,
+        lsof: lsofFor(123, 64440),
+        requestJson,
+        onExec,
+      });
+      const withoutCache = await fetchQuotaWithRuntime(runtime);
+      expect(withoutCache.state).toMatchObject({
+        status: "unavailable",
+        error: "Antigravity/agy has no accessible endpoint",
+      });
+      expect(providerPresence(withoutCache, agyAdapter)).toBe("attention");
+
+      writeCachedProviders([cachedAgyQuota()]);
+      const result = await fetchQuotaWithRuntime(runtime);
+      expect(result).toMatchObject({
+        source: "cache",
+        state: { status: "stale" },
+        windows: [{ id: "gemini_5h", percentRemaining: 88 }],
+      });
+      expect(readCachedProvider("agy")?.windows[0]?.percentRemaining).toBe(88);
+      expect(await inspectAuthWithRuntime(runtime)).toMatchObject({
+        sources: [{ source: "loopback", status: "missing" }],
+      });
+      expect(requestJson).not.toHaveBeenCalled();
+      expect(onExec.mock.calls.every(([command]) => command === "ps")).toBe(
+        true,
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "retires quota when desktop paths occur only in another process's arguments",
+    async () => {
+      writeCachedProviders([cachedAgyQuota()]);
+      const requestJson = vi.fn();
+      const result = await fetchQuotaWithRuntime(
+        runtimeWith({
+          ps: '123 /usr/bin/codex --prompt "/Applications/Google Antigravity.app/Contents/MacOS/Electron"\n124 /usr/bin/node /usr/share/antigravity/antigravity\n125 /Applications/Codex.app/Contents/MacOS/Electron --prompt /Applications/Google Antigravity.app/Contents/MacOS/Electron\n126 /usr/bin/node /Applications/Google Antigravity.app/Contents/MacOS/Electron\n',
+          requestJson,
+        }),
+      );
+      expect(result.state).toMatchObject({
+        status: "unavailable",
+        error: "Antigravity/agy is not running",
+      });
+      expect(readCachedProvider("agy")).toBeUndefined();
+      expect(requestJson).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains quota when process discovery fails to establish absence", async () => {
+    writeCachedProviders([cachedAgyQuota()]);
+    const requestJson = vi.fn();
+    const result = await fetchQuotaWithRuntime(
+      runtimeWith({ psError: new Error("ps denied"), requestJson }),
+    );
+    expect(result.state.status).not.toBe("fresh");
+    expect(readCachedProvider("agy")?.windows[0]?.percentRemaining).toBe(88);
+    expect(requestJson).not.toHaveBeenCalled();
+  });
+
   it("preserves cache when language-server process is running without a CSRF token", async () => {
     writeCachedProviders([cachedAgyQuota()]);
     const port = 64440;

@@ -120,7 +120,7 @@ export async function fetchAccountQuotas(
     if (accounts.length > 1) {
       report.accountKey = account.accountKey;
       // A sole lane keeps the legacy keyless shape, so it names no locator.
-      if (account.locator) report.accountLocator = { ...account.locator };
+      if (account.locator) report.accountLocator ??= { ...account.locator };
     }
     report.accountKeys = coveredAccountKeys(
       account.accountKey,

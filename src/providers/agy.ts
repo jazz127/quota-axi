@@ -495,7 +495,10 @@ async function discoverAgyEndpoints(
   const processListText = await readProcessList(runtime, deadline);
   const processes =
     processListText !== null ? processInfosFromPs(processListText) : [];
-  const confirmedNoProcess = processListText !== null && processes.length === 0;
+  const confirmedNoProcess =
+    processListText !== null &&
+    processes.length === 0 &&
+    !hasAgyDesktopProcess(processListText);
   const processDiscoveryUnavailable = processListText === null;
   const endpoints: AgyConnectionEndpoint[] = [];
   let discoveryError: unknown;
@@ -922,6 +925,22 @@ function windowKindRank(window: QuotaWindow): number {
   if (window.kind === "session") return 0;
   if (window.kind === "weekly") return 1;
   return 2;
+}
+
+function hasAgyDesktopProcess(output: string): boolean {
+  return output.split(/\r?\n/).some((line) => {
+    const command = line.match(/^\s*\d+\s+(.+)$/)?.[1];
+    if (!command) return false;
+    const appBundle = normalizedPath(command).match(
+      /^["']?(\/[^\n]*?\.app)\/contents\//,
+    )?.[1];
+    return (
+      (appBundle !== undefined &&
+        !/\s+(?:\/|--)/.test(appBundle) &&
+        appBundle.split("/").at(-1)?.includes("antigravity") === true) ||
+      executableName(tokenizeCommand(command)[0] ?? "") === "antigravity"
+    );
+  });
 }
 
 function agyProcessSource(command: string): AgyProcessSource | undefined {
