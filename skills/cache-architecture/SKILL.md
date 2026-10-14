@@ -25,7 +25,7 @@ To prevent cross-account or cross-environment cache poisoning, providers whose i
 
 - **Enrolled Providers**: The authoritative registry is `CONTEXT_SCOPED_PROVIDERS` in [src/cache.ts](../../src/cache.ts).
 - **Context Identifiers**: Snapshots carry an opaque SHA-256 context identifier derived from the answering configuration:
-  - **Claude**: Hashed profile and credential-storage selection. `claudeCredentialContextId` appends an env marker so environment-token readings cannot be served as stale cache for stored-token accounts.
+  - **Claude**: Profile context and environment-token isolation follow [README Cache](../../README.md#cache).
   - **Kimi**: Home path plus the slot and base URL resolved from `config.toml` (never the file contents, which contain keys). Prevents mainland China snapshots from serving as global fallbacks.
   - **Command Code**: Winning source plus the account identity validated by `whoami`.
   - **MiniMax**: Answering credential source plus deployment host.

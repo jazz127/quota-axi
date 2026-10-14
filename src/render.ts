@@ -633,16 +633,29 @@ function auditBlocks(response: QuotaAxiResponse): string[] {
       worstReserveWindowId: scope.pace?.worstReserveWindowId ?? UNKNOWN,
     })),
   );
+  const locators = response.providers.some(
+    (provider) => provider.accountLocator,
+  );
   const accounts = response.providers.map((provider) => ({
     ...providerColumns(provider),
     email: provider.account?.email ?? "hidden",
     organization: provider.account?.organization ?? NONE,
     accountId: provider.account?.accountId ?? NONE,
     identityStatus: provider.account?.identityStatus ?? UNKNOWN,
-    locatorKind: provider.accountLocator?.kind ?? NONE,
-    locatorPath: provider.accountLocator?.path ?? NONE,
-    locatorEntry: provider.accountLocator?.entry ?? NONE,
-    delegateEligible: provider.accountLocator?.delegateEligible ?? false,
+    ...(locators
+      ? {
+          locatorKind: provider.accountLocator?.kind ?? NONE,
+          locatorPath: provider.accountLocator
+            ? collapseHome(provider.accountLocator.path)
+            : NONE,
+          ...(provider.accountLocator?.entry
+            ? { locatorEntry: provider.accountLocator.entry }
+            : {}),
+          keychainService: provider.accountLocator?.keychainService ?? NONE,
+          delegateEligible:
+            provider.accountLocator?.delegateEligible ?? UNKNOWN,
+        }
+      : {}),
   }));
   const attempts = response.providers.flatMap((provider) =>
     (provider.attempts ?? []).map((attempt) => attemptRow(provider, attempt)),

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { decode } from "@toon-format/toon";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchAccountQuotas,
@@ -589,6 +590,93 @@ describe("Codex Pi sibling account lanes", () => {
       windows: [{ percentUsed: 30 }],
     });
   });
+
+  it.each([
+    { rejected: "native", entry: "openai-codex", lane: "codex-home" },
+    {
+      rejected: "pi",
+      entry: "openai-codex-personal",
+      lane: "openai-codex-personal",
+    },
+  ])(
+    "attributes quota and cache replay to the answering credential after $rejected rejection",
+    async ({ rejected, entry, lane }) => {
+      writeNativeAuth("native-access-token", "acct-personal");
+      writePiAuth({
+        [entry]: piOauthEntry({
+          access: "personal-access-token",
+          accountId: "acct-personal",
+        }),
+        "openai-codex-work": piOauthEntry({
+          access: "work-access-token",
+          accountId: "acct-work",
+        }),
+      });
+      stubUsageByToken({
+        "native-access-token":
+          rejected === "native"
+            ? new Response("unauthorized", { status: 401 })
+            : usage(30, "personal@example.invalid", "acct-personal"),
+        "personal-access-token":
+          rejected === "pi"
+            ? new Response("unauthorized", { status: 401 })
+            : usage(30, "personal@example.invalid", "acct-personal"),
+        "work-access-token": usage(80, "work@example.invalid", "acct-work"),
+      });
+
+      const expectedLocator =
+        rejected === "native"
+          ? {
+              kind: "pi-auth",
+              path: join(process.env.PI_CODING_AGENT_DIR!, "auth.json"),
+              entry,
+            }
+          : {
+              kind: "codex-home",
+              path: process.env.CODEX_HOME!,
+              delegateEligible: true,
+            };
+      const { fetchQuota } = await import("../../src/commands.js");
+      const response = await fetchQuota(["codex"], OPTIONS);
+      expect(response.providers).toHaveLength(2);
+      expect(response.providers[0]).toMatchObject({
+        accountKey: lane,
+        accountLocator: expectedLocator,
+        source: rejected === "native" ? `pi:${entry}` : "oauth",
+        state: { status: "fresh" },
+        windows: [{ percentUsed: 30 }],
+      });
+      expect(
+        quotaJsonReport(response, true).providers[0]?.accountLocator,
+      ).toEqual(expectedLocator);
+      expect(
+        decode(renderQuotaToon(response, "/quota-axi", true), {
+          strict: false,
+        }),
+      ).toMatchObject({
+        accounts: [
+          {
+            accountKey: lane,
+            locatorKind: expectedLocator.kind,
+            locatorPath: expectedLocator.path,
+          },
+          { accountKey: "openai-codex-work" },
+        ],
+      });
+
+      const { readReusableProviders, writeCachedProviders } =
+        await import("../../src/cache.js");
+      writeCachedProviders(response.providers, response.generatedAt);
+      const replayed = readReusableProviders("codex", 60);
+      expect(replayed).toHaveLength(2);
+      expect(replayed?.[0]).toMatchObject({
+        accountKey: lane,
+        accountLocator: expectedLocator,
+        state: { reused: true },
+        windows: [{ percentUsed: 30 }],
+      });
+    },
+  );
 
   it("coalesces a native login without a stored account id into the matching Pi lane", async () => {
     process.env.QUOTA_AXI_CODEX_BINARY = join(tempDir!, "missing-codex");
