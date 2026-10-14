@@ -284,17 +284,30 @@ export type DegradedSource = {
   error?: string;
 };
 
-/** Local credential route, shown only in full output and never cached. */
+/**
+ * The local selector a discovered account lane reads, so a consumer can map
+ * the lane back to the configuration that names it. Never a credential or a
+ * verified user identity. Published only by `--full`.
+ */
 export type AccountLocator = {
-  kind: "codex-home" | "pi-auth";
+  /** Which kind of selector `path` is, such as `config-dir`. */
+  kind: string;
   path: string;
+  /** The exact secure-store service the lane reads, where one applies. */
+  keychainService?: string;
+  /** The selected entry within a shared auth store, where one applies. */
   entry?: string;
+  /**
+   * True only for the lane the process-selected credential owns, which alone
+   * may run delegated refresh; false for a read-only sibling lane.
+   */
   delegateEligible?: boolean;
 };
 
 export type ProviderAccount = {
   /** Opaque local lane identity, stable across refresh and discovery order. */
   accountKey: string;
+  /** Exact local selector evidence, published on the lane's row by `--full`. */
   locator?: AccountLocator;
   /**
    * Resolves undefined when the lane establishes no distinct account. A
@@ -316,7 +329,11 @@ export type ProviderQuota = {
    * just its own key, and a provider without account discovery lists `default`.
    */
   accountKeys?: string[];
-  /** Full-only credential route evidence; never written to quota cache. */
+  /**
+   * The local selector an expanded lane reads. Present only when the adapter
+   * names one and the report expanded; omitted from default `--json`, see
+   * `--full`.
+   */
   accountLocator?: AccountLocator;
   /** Display name. Omitted from default `--json`; see `--full`. */
   label?: string;

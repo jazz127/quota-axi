@@ -1,10 +1,17 @@
 import { chmodSync, existsSync, renameSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { deleteCachedProvider, readCachedClaudeProvider } from "../cache.js";
+import {
+  carrySubscriptionStamp,
+  readCachedClaudeProvider,
+  retireCachedContext,
+  stampClaudeReadingContext,
+  stampSubscriptionScope,
+} from "../cache.js";
 import {
   claudeCredentialContextId,
   claudeKeychainAccessMarkerPath,
+  claudeStoredProfileContextId,
   ensurePrivateParent,
   readJsonFileResult,
   type JsonFileReadResult,
@@ -15,8 +22,14 @@ import {
   CLAUDE_OAUTH_TOKEN_ENV,
   claudeEnvOauthToken,
   isOpaqueSuffixedKeychainService,
+  claudeListedProfiles,
   claudeProfileLocations,
 } from "../lib/claude-profile.js";
+import {
+  claudeAccountKey,
+  discoverClaudeProfiles,
+  type ClaudeProfile,
+} from "./claude-accounts.js";
 import { execFileText } from "../lib/process.js";
 import { listRunningCommandLines } from "../lib/running-processes.js";
 import { redactSecret } from "../lib/secret.js";
@@ -24,6 +37,7 @@ import { clampPercent, nowIso, retryAfterToIso } from "../lib/time.js";
 import type {
   AuthProviderReport,
   AuthSourceReport,
+  ProviderAccount,
   ProviderAdapter,
   ProviderAuthStatus,
   ProviderOptions,
@@ -125,6 +139,8 @@ type KeychainSelection =
 type ClaudeAccount = NonNullable<ProviderQuota["account"]>;
 type ClaudeIdentityResult = {
   account: ClaudeAccount;
+  /** The organization the bearer is scoped to, which owns its limits. */
+  organizationId?: string;
   error?: string;
 };
 type ClaudeProfileLocations = {
@@ -134,6 +150,11 @@ type ClaudeProfileLocations = {
   acceptsOpaqueDefaultItem: boolean;
   keychainPath?: string;
   keychainAccessMarker: string;
+  /**
+   * Keychain services other reported profiles own. A default selection never
+   * takes one of them for its own opaque item: that item is a sibling lane's.
+   */
+  siblingServices?: ReadonlySet<string>;
 };
 
 type RawUsageWindow = {
@@ -177,7 +198,126 @@ export const claudeAdapter: ProviderAdapter = {
   label: "Claude",
   fetchQuota,
   inspectAuth,
+  discoverAccounts: discoverClaudeAccounts,
 };
+
+/**
+ * How one profile lane is read. `envEligible` marks the process-selected
+ * lane, the only one `CLAUDE_CODE_OAUTH_TOKEN` describes; `keychain` shares
+ * one metadata listing across the lanes of a single read.
+ */
+type ClaudeLane = {
+  envEligible: boolean;
+  keychain?: KeychainMetadataCache;
+  contextId?: string;
+};
+
+/** The process-selected profile, read exactly as it is without discovery. */
+const SELECTED_LANE: ClaudeLane = { envEligible: true };
+
+/**
+ * Opt-in profile lanes from `QUOTA_AXI_CLAUDE_PROFILES`. Unset or blank, there
+ * is nothing to discover and Claude keeps its single selected lane, unchanged.
+ *
+ * Each lane reads only its own store. Only the process-selected lane consults
+ * the environment token and may delegate a refresh; a sibling lane is
+ * read-only. Its Keychain value is read only under the same per-item grant
+ * marker or `--allow-keychain-prompt` as today.
+ */
+async function discoverClaudeAccounts(): Promise<
+  ProviderAccount[] | undefined
+> {
+  const listed = claudeListedProfiles();
+  if (!listed) return undefined;
+  const darwin = process.platform === "darwin";
+  // One metadata listing for the whole read: discovery and every lane share
+  // it, so an N-profile run issues one bounded dump, not N+1.
+  const keychain = darwin ? keychainMetadataCache() : undefined;
+  const lanes = await discoverClaudeProfiles(
+    listed.dirs,
+    async (profile, siblingServices) =>
+      keychainItemPresent(
+        resolveClaudeProfileLocations(profile, siblingServices),
+        keychain,
+      ),
+  );
+  const services = lanes.map(({ profile }) => profile.keychainService);
+  return lanes.map(({ profile, selected }): ProviderAccount => {
+    const lane: ClaudeLane = { envEligible: selected, keychain };
+    const siblingServices = new Set(
+      services.filter((service) => service !== profile.keychainService),
+    );
+    return {
+      accountKey: claudeAccountKey(profile),
+      locator: {
+        kind: "config-dir",
+        path: profile.configDir,
+        ...(darwin ? { keychainService: profile.keychainService } : {}),
+        delegateEligible: selected,
+      },
+      fetchQuota: (options) =>
+        fetchClaudeLaneQuota(
+          {
+            ...options,
+            // Only the selected profile owns the existing delegate; no vendor
+            // command is ever launched for a sibling's store.
+            refreshCredentials: options.refreshCredentials && selected,
+          },
+          profile,
+          siblingServices,
+          lane,
+        ),
+      inspectAuth: (options) =>
+        inspectClaudeProfileAuth(
+          options,
+          resolveClaudeProfileLocations(profile, siblingServices),
+          lane,
+        ),
+    };
+  });
+}
+
+/**
+ * Positive metadata evidence that a profile's exact Keychain item exists. No
+ * value is read and nothing can prompt; an inconclusive listing falls back to
+ * the same pinned presence check plain calls already make.
+ */
+async function keychainItemPresent(
+  locations: ClaudeProfileLocations,
+  keychain: KeychainMetadataCache | undefined,
+): Promise<boolean> {
+  const selection = await listKeychainItem(locations, keychain);
+  if (selection.status !== "unknown") return selection.status === "present";
+  return (await readKeychainItemPresence(locations)) === "present";
+}
+
+/**
+ * One discovered profile lane. It is cached and served stale under its own
+ * profile context, and a definitive sign-out retires only that context's
+ * snapshot, never a sibling's.
+ */
+async function fetchClaudeLaneQuota(
+  options: ProviderOptions,
+  profile: ClaudeProfile,
+  siblingServices: ReadonlySet<string>,
+  lane: ClaudeLane,
+): Promise<ProviderQuota> {
+  const storedContextId = claudeStoredProfileContextId(profile);
+  // A lane that never consults the environment token is not env-selected, so
+  // its reading belongs to the profile's own stored identity.
+  const contextId = lane.envEligible
+    ? claudeCredentialContextId(profile)
+    : storedContextId;
+  const report = await fetchClaudeProfileQuota(
+    options,
+    resolveClaudeProfileLocations(profile, siblingServices),
+    { ...lane, contextId },
+    contextId,
+    () => retireCachedContext("claude", storedContextId),
+  );
+  stampClaudeReadingContext(report, contextId);
+  return report;
+}
 
 /**
  * `claude doctor` is the smallest observed non-interactive Claude Code command
@@ -236,10 +376,25 @@ export async function fetchQuota(
 ): Promise<ProviderQuota> {
   if (isProfileOnly(options)) return fetchProfileOnlyQuota();
 
-  const attempts: SourceAttempt[] = [];
-  const credentialContextId = claudeCredentialContextId();
+  return fetchClaudeProfileQuota(
+    options,
+    resolveClaudeProfileLocations(),
+    SELECTED_LANE,
+    claudeCredentialContextId(),
+    () => retireCachedContext("claude", claudeStoredProfileContextId()),
+  );
+}
 
-  let pass = await attemptClaudeQuota(options, attempts);
+async function fetchClaudeProfileQuota(
+  options: ProviderOptions,
+  locations: ClaudeProfileLocations,
+  lane: ClaudeLane,
+  credentialContextId: string,
+  retireCache: () => void,
+): Promise<ProviderQuota> {
+  const attempts: SourceAttempt[] = [];
+
+  let pass = await attemptClaudeQuota(options, attempts, locations, lane);
   if (pass.kind === "success") return pass.report;
 
   // Soft expiry the Claude CLI can fix: hand the rotation to the CLI that owns
@@ -256,7 +411,15 @@ export async function fetchQuota(
       const run = await runRefreshDelegate(CLAUDE_CLI_REFRESH_DELEGATE);
       attempts.push(refreshDelegateAttempt(CLAUDE_CLI_REFRESH_DELEGATE, run));
       if (run.status === "ran") {
-        const retry = await attemptClaudeQuota(options, attempts);
+        // The vendor may have replaced the item it owns, so a shared listing
+        // cannot speak for the store this pass is about to re-read.
+        lane.keychain?.invalidate();
+        const retry = await attemptClaudeQuota(
+          options,
+          attempts,
+          locations,
+          lane,
+        );
         if (retry.kind === "success") return retry.report;
         pass = retry;
       } else if (run.status === "unconfirmed") {
@@ -273,8 +436,11 @@ export async function fetchQuota(
     pass.failure,
     attempts,
     pass.cacheContextId ?? credentialContextId,
-    claudeEnvOauthToken() !== undefined,
+    lane.envEligible && claudeEnvOauthToken() !== undefined,
     pass.definitiveFailureIsEnvOnly,
+    pass.cacheContextId && pass.cacheContextId !== credentialContextId
+      ? () => retireCachedContext("claude", pass.cacheContextId!)
+      : retireCache,
   );
 }
 
@@ -583,8 +749,10 @@ async function confirmClaudeStoredExpiry(
 async function attemptClaudeQuota(
   options: ProviderOptions,
   attempts: SourceAttempt[],
+  locations: ClaudeProfileLocations,
+  lane: ClaudeLane,
 ): Promise<ClaudeQuotaPass> {
-  const credentialStates = await readCredentialStates(options);
+  const credentialStates = await readCredentialStates(options, locations, lane);
   const credentialCandidates = credentialStates
     .filter(
       (
@@ -655,7 +823,7 @@ async function attemptClaudeQuota(
       const credentialContextId =
         credential.source === "pi:anthropic"
           ? claudePiContextId(credential.accessToken)
-          : claudeCredentialContextId();
+          : (lane.contextId ?? claudeCredentialContextId());
       attempts.push({ source: credential.source, status: "failed" });
       try {
         const quota = await fetchOauthUsage(credential);
@@ -677,10 +845,10 @@ async function attemptClaudeQuota(
         });
         if (credential.source === "pi:anthropic")
           stampClaudePiContext(report, credential.accessToken);
-        return {
-          kind: "success",
-          report,
-        };
+        // One login can hold seats in several organizations, each with its
+        // own limits, so the organization names which subscription this is.
+        stampSubscriptionScope(report, quota.organizationId ?? null);
+        return { kind: "success", report };
       } catch (error) {
         let failure = claudeFailureFor(error);
         const softRefreshable =
@@ -875,7 +1043,7 @@ async function attemptClaudeQuota(
       failure: new ClaudeFailure(keychainFailure.source.error!, {
         staleEligible: true,
       }),
-      contextId: claudeCredentialContextId(),
+      contextId: lane.contextId ?? claudeCredentialContextId(),
       source: "keychain",
     };
   }
@@ -903,13 +1071,14 @@ function failureReport(
   credentialContextId: string,
   envSelected: boolean,
   definitiveFailureIsEnvOnly: boolean,
+  retireCache: () => void,
 ): ProviderQuota {
   // The env token's own rejection describes only the env-selected session; it
   // never resolved a stored candidate, so it must not retire a cached snapshot
   // that belongs to an unrelated stored-profile account.
   if (failure.definitiveAuth && !definitiveFailureIsEnvOnly) {
     try {
-      deleteCachedProvider("claude");
+      retireCache();
     } catch {
       // Current authentication remains definitive when cache I/O is blocked.
     }
@@ -989,6 +1158,7 @@ function staleClaudeReport(
     },
     attempts,
   };
+  carrySubscriptionStamp(cached, report);
   if (failure.authStatus) report.state.authStatus = failure.authStatus;
   return failure.usageFetchFailure ? withUsageFetchFailure(report) : report;
 }
@@ -1011,8 +1181,19 @@ function claudeFailureFor(error: unknown): ClaudeFailure {
 export async function inspectAuth(
   options: ProviderOptions,
 ): Promise<AuthProviderReport> {
-  const locations = resolveClaudeProfileLocations();
-  const states = await readCredentialStates(options, locations);
+  return inspectClaudeProfileAuth(
+    options,
+    resolveClaudeProfileLocations(),
+    SELECTED_LANE,
+  );
+}
+
+async function inspectClaudeProfileAuth(
+  options: ProviderOptions,
+  locations: ClaudeProfileLocations,
+  lane: ClaudeLane,
+): Promise<AuthProviderReport> {
+  const states = await readCredentialStates(options, locations, lane);
   const sources = states.map((state): AuthSourceReport => {
     if (state.status === "available") {
       return {
@@ -1198,12 +1379,17 @@ function readEnvCredentialState(): CredentialState | undefined {
 
 async function readCredentialStates(
   options: ProviderOptions,
-  locations = resolveClaudeProfileLocations(),
+  locations: ClaudeProfileLocations,
+  lane: ClaudeLane,
 ): Promise<CredentialState[]> {
   const states: CredentialState[] = [];
 
-  const envState = readEnvCredentialState();
-  if (envState) states.push(envState);
+  // The env token names the one live session's account, never every lane, so
+  // a sibling lane reads only its own store.
+  if (lane.envEligible) {
+    const envState = readEnvCredentialState();
+    if (envState) states.push(envState);
+  }
 
   if (locations.credentialFile !== undefined)
     states.push(
@@ -1214,15 +1400,17 @@ async function readCredentialStates(
       ),
     );
 
-  const piAnthropicState = piAnthropicCredentialState(
-    await piAnthropicBroker.resolve(),
-  );
-  // Pi is an optional sibling store. Its absence must not add noise to the
-  // established Claude source/attempt report.
-  if (piAnthropicState.status !== "missing") states.push(piAnthropicState);
+  // Pi is a process-selected fallback, not a credential for every profile.
+  if (lane.envEligible) {
+    const piAnthropicState = piAnthropicCredentialState(
+      await piAnthropicBroker.resolve(),
+    );
+    // Its absence must not add noise to the established source report.
+    if (piAnthropicState.status !== "missing") states.push(piAnthropicState);
+  }
 
   if (process.platform === "darwin") {
-    const selection = await listKeychainItem(locations);
+    const selection = await listKeychainItem(locations, lane.keychain);
     if (selection.status === "missing") {
       states.push(keychainPresenceState("missing"));
       return states;
@@ -1375,7 +1563,39 @@ async function readKeychainItemPresence(
 // items and changed search lists without retaining a stale service/path pin.
 async function listKeychainItem(
   locations: ClaudeProfileLocations,
+  cache?: KeychainMetadataCache,
 ): Promise<KeychainSelection> {
+  const snapshot = await (cache ? cache.read() : readKeychainMetadata());
+  return snapshot
+    ? selectKeychainItem(snapshot.metadata, locations, snapshot.paths)
+    : { status: "unknown" };
+}
+
+type KeychainMetadataSnapshot = { metadata: string; paths: string[] };
+
+type KeychainMetadataCache = {
+  read: () => Promise<KeychainMetadataSnapshot | undefined>;
+  invalidate: () => void;
+};
+
+/**
+ * One listing per read, shared by discovery and every lane it enrolls. It is
+ * deliberately not process-wide: a live `--tui` must still notice a replaced
+ * item on its next refresh, and a delegated refresh invalidates it at once.
+ */
+function keychainMetadataCache(): KeychainMetadataCache {
+  let snapshot: Promise<KeychainMetadataSnapshot | undefined> | undefined;
+  return {
+    read: () => (snapshot ??= readKeychainMetadata()),
+    invalidate: () => {
+      snapshot = undefined;
+    },
+  };
+}
+
+async function readKeychainMetadata(): Promise<
+  KeychainMetadataSnapshot | undefined
+> {
   try {
     const output = await execFileText(
       "security",
@@ -1386,10 +1606,10 @@ async function listKeychainItem(
     for (const line of output.split(/\r?\n/)) {
       if (!line.trim()) continue;
       const path = /^\s*"(\/[^"\n]+)"\s*$/.exec(line)?.[1];
-      if (!path) return { status: "unknown" };
+      if (!path) return undefined;
       if (!paths.includes(path)) paths.push(path);
     }
-    if (!paths.length) return { status: "unknown" };
+    if (!paths.length) return undefined;
     // Search the same keychains as an unqualified exact read. Metadata only:
     // no -d (values), -r (raw data), -a (ACLs), or -i (ACL editing). One bounded
     // dump (5s / 16 MiB) covers the list; failure withholds any absence verdict.
@@ -1398,9 +1618,9 @@ async function listKeychainItem(
       ["dump-keychain", ...paths],
       KEYCHAIN_PRESENCE_TIMEOUT_MS,
     );
-    return selectKeychainItem(metadata, locations, paths);
+    return { metadata, paths };
   } catch {
-    return { status: "unknown" };
+    return undefined;
   }
 }
 
@@ -1445,6 +1665,8 @@ function selectKeychainItem(
       if (claudeOwned) inconclusive = true;
       continue;
     }
+    // Another reported profile's own item: known, and known not to be ours.
+    if (locations.siblingServices?.has(service)) continue;
     const opaque =
       locations.acceptsOpaqueDefaultItem &&
       isOpaqueSuffixedKeychainService(service);
@@ -1581,13 +1803,16 @@ export function claudeKeychainAccount(): string {
     : DEFAULT_KEYCHAIN_ACCOUNT;
 }
 
-function resolveClaudeProfileLocations(): ClaudeProfileLocations {
+function resolveClaudeProfileLocations(
+  profile: ClaudeProfile = claudeProfileLocations(),
+  siblingServices?: ReadonlySet<string>,
+): ClaudeProfileLocations {
   const {
     configDir,
     secureStorageSelected,
     keychainService,
     acceptsOpaqueDefaultItem,
-  } = claudeProfileLocations();
+  } = profile;
   const keychainAccount = claudeKeychainAccount();
   return {
     credentialFile:
@@ -1601,6 +1826,7 @@ function resolveClaudeProfileLocations(): ClaudeProfileLocations {
       keychainAccount,
       keychainService,
     ),
+    ...(siblingServices?.size ? { siblingServices } : {}),
   };
 }
 
@@ -1706,6 +1932,7 @@ function hasRefreshToken(oauth: Record<string, unknown>): boolean {
 async function fetchOauthUsage(credentials: ClaudeCredentials): Promise<{
   plan?: string;
   account?: ProviderQuota["account"];
+  organizationId?: string;
   identityError?: string;
   windows: QuotaWindow[];
   refreshedAt: string;
@@ -1733,6 +1960,9 @@ async function fetchOauthUsage(credentials: ClaudeCredentials): Promise<{
     return {
       ...quota,
       account: identity.account,
+      ...(identity.organizationId
+        ? { organizationId: identity.organizationId }
+        : {}),
       identityError: identity.error,
     };
   } finally {
@@ -1761,9 +1991,13 @@ async function fetchOauthProfile(
         `identity_profile_http_${response.status}`,
       );
     }
-    const account = normalizeClaudeProfile(await response.json());
+    const raw: unknown = await response.json();
+    const account = normalizeClaudeProfile(raw);
+    const organizationId = stringValue(
+      objectValue(objectValue(raw)?.organization)?.uuid,
+    );
     return account
-      ? { account }
+      ? { account, ...(organizationId ? { organizationId } : {}) }
       : unverifiedClaudeIdentity("identity_profile_unrecognized");
   } catch (error) {
     return unverifiedClaudeIdentity(

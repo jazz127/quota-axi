@@ -117,12 +117,15 @@ export async function fetchAccountQuotas(
     if (report) readings.push({ account, report });
   }
   for (const { account, report } of readings) {
-    if (accounts.length > 1) report.accountKey = account.accountKey;
+    if (accounts.length > 1) {
+      report.accountKey = account.accountKey;
+      // A sole lane keeps the legacy keyless shape, so it names no locator.
+      if (account.locator) report.accountLocator = { ...account.locator };
+    }
     report.accountKeys = coveredAccountKeys(
       account.accountKey,
       report.accountKeys,
     );
-    report.accountLocator ??= account.locator;
   }
   return coalesceVerifiedSubscriptions(readings.map(({ report }) => report));
 }

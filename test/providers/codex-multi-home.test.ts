@@ -220,7 +220,7 @@ describe("Codex native home discovery", () => {
         "quota-axi",
         true,
       ),
-    ).toContain(luna);
+    ).toContain("codex-home,~/.codex-luna,");
   });
 
   it("does not attribute a signed-in home's cached quota to a now unauthenticated home", async () => {
