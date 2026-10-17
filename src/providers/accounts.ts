@@ -36,11 +36,12 @@ type Discovery = { accounts?: ProviderAccount[]; failure?: string };
 async function accountsFor(
   adapter: ProviderAdapter,
   options: ProviderOptions,
+  operation: "quota" | "auth",
 ): Promise<Discovery> {
   if (options.credentialMode === "profile-only") return {};
   let accounts: ProviderAccount[] | undefined;
   try {
-    accounts = await adapter.discoverAccounts?.();
+    accounts = await adapter.discoverAccounts?.(options, operation);
   } catch (error) {
     return {
       failure:
@@ -69,7 +70,7 @@ export async function fetchAccountQuotas(
   adapter: ProviderAdapter,
   options: ProviderOptions,
 ): Promise<ProviderQuota[]> {
-  const { accounts, failure } = await accountsFor(adapter, options);
+  const { accounts, failure } = await accountsFor(adapter, options, "quota");
   if (!accounts) {
     const report = await adapter.fetchQuota(options);
     if (failure) {
@@ -152,7 +153,7 @@ export async function inspectAccountAuth(
   adapter: ProviderAdapter,
   options: ProviderOptions,
 ): Promise<AuthProviderReport[]> {
-  const { accounts, failure } = await accountsFor(adapter, options);
+  const { accounts, failure } = await accountsFor(adapter, options, "auth");
   if (!accounts) {
     const report = await adapter.inspectAuth(options);
     if (failure)
