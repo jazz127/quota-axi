@@ -69,7 +69,7 @@ Credential selection is shared in `src/providers/credential-selection.ts`:
 
 ## Delegated Credential Refresh
 
-Shared machinery lives in `src/providers/delegated-refresh.ts`. It is the **single carve-out** to quota-axi's read-only boundary:
+Shared machinery lives in `src/providers/delegated-refresh.ts`. Command boundaries follow [README Safety guarantees](../../README.md#safety-guarantees).
 
 - **Eligibility criteria**: A delegate is eligible ONLY when:
   1. The same stored access token is expired,

@@ -62,7 +62,7 @@ export type ClaudeSwapAccount = {
   organization?: string;
   /** claude-swap's own `usageStatus`; only `ok` carries `usage`. */
   usageStatus: string;
-  /** The `usage` object as printed. */
+  /** Parsed account-wide quota windows from `usage`. */
   usage?: ClaudeSwapUsage;
   /** When claude-swap measured `usage`. */
   fetchedAt?: string;
