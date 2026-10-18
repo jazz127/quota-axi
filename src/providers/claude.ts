@@ -228,10 +228,10 @@ const SELECTED_LANE: ClaudeLane = { envEligible: true };
  * Unset or blank, there is nothing to discover and Claude keeps its single
  * selected lane, unchanged.
  *
- * Each lane reads only its own store. Only the process-selected lane consults
- * the environment token and may delegate a refresh; a sibling lane is
- * read-only. Its Keychain value is read only under the same per-item grant
- * marker or `--allow-keychain-prompt` as today.
+ * Each native profile lane reads only its own store. Only the process-selected
+ * profile lane consults the environment token and may delegate a refresh;
+ * a sibling profile lane is read-only. Its Keychain value is read only under
+ * the same per-item grant marker or `--allow-keychain-prompt` as today.
  */
 async function discoverClaudeAccounts(
   options?: ProviderOptions,
