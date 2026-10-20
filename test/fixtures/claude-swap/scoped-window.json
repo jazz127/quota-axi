@@ -1,0 +1,16 @@
+{
+  "number": 3,
+  "email": "scoped@example.invalid",
+  "organizationName": "Scoped Org",
+  "organizationUuid": "00000000-0000-4000-8000-000000000003",
+  "active": true,
+  "usageStatus": "ok",
+  "usage": {
+    "fiveHour": { "pct": 25, "resetsAt": "2026-10-14T18:00:00Z" },
+    "sevenDay": { "pct": 40, "resetsAt": "2026-10-18T21:00:00Z" },
+    "scoped": [
+      { "pct": 100, "resetsAt": "2026-10-18T21:00:00Z", "name": "Fable" }
+    ]
+  },
+  "usageFetchedAt": "2026-10-14T12:59:00Z"
+}
