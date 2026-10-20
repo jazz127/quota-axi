@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -221,6 +222,57 @@ function expectNativeLane(report: QuotaReport): void {
 }
 
 describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
+  it("keeps a fully used scoped model window beside account-wide headroom", async () => {
+    const scopedAccount = JSON.parse(
+      readFileSync(
+        join(
+          import.meta.dirname,
+          "fixtures",
+          "claude-swap",
+          "scoped-window.json",
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    cswap(list([scopedAccount]));
+    vi.stubEnv("QUOTA_AXI_CLAUDE_SWAP", "1");
+
+    const [provider] = (await quota()).providers;
+
+    expect(provider.windows).toMatchObject([
+      { id: "five_hour", percentRemaining: 75 },
+      { id: "seven_day", percentRemaining: 60 },
+      {
+        id: "model:fable",
+        label: "Fable week",
+        kind: "model",
+        percentRemaining: 0,
+      },
+    ]);
+  });
+
+  it("omits unknown scoped usage instead of inventing a model window", async () => {
+    cswap(
+      list([
+        {
+          ...personal(),
+          usage: {
+            ...personal().usage,
+            scoped: [{}, { pct: 100 }, { name: "Fable" }, { name: "", pct: 0 }],
+          },
+        },
+      ]),
+    );
+    vi.stubEnv("QUOTA_AXI_CLAUDE_SWAP", "1");
+
+    const [provider] = (await quota()).providers;
+
+    expect(provider.windows.map((window) => window.id)).toEqual([
+      "five_hour",
+      "seven_day",
+    ]);
+  });
+
   it("never runs cswap without the opt-in", async () => {
     cswap(list());
     for (const value of [undefined, "", "0", "false", "yes"]) {
@@ -240,7 +292,7 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
     expect(report.schemaVersion).toBe(6);
     expect(report.providers.map(remaining)).toEqual([
       ["five_hour=91", "seven_day=7"],
-      ["five_hour=63", "seven_day=59"],
+      ["five_hour=63", "seven_day=59", "model:fable=88"],
     ]);
     expect(report.providers[0].windows[0].resetsAt).toBe(
       "2026-10-14T18:00:00.431135+00:00",
@@ -285,7 +337,7 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
     const report = await quota();
     expect(report.providers.map(remaining)).toEqual([
       ["five_hour=91", "seven_day=7"],
-      ["five_hour=63", "seven_day=59"],
+      ["five_hour=63", "seven_day=59", "model:fable=88"],
     ]);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -301,7 +353,7 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
     expect(report.providers).toHaveLength(2);
     expect(report.providers.map(remaining)).toEqual([
       ["five_hour=91", "seven_day=7"],
-      ["five_hour=63", "seven_day=59"],
+      ["five_hour=63", "seven_day=59", "model:fable=88"],
     ]);
     expect(fetch).not.toHaveBeenCalled();
   });

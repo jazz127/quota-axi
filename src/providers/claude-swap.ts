@@ -51,9 +51,14 @@ type ClaudeSwapWindow = {
   resetsAt?: string;
 };
 
+type ClaudeSwapScopedWindow = ClaudeSwapWindow & {
+  name: string;
+};
+
 type ClaudeSwapUsage = {
   fiveHour?: ClaudeSwapWindow;
   sevenDay?: ClaudeSwapWindow;
+  scoped?: ClaudeSwapScopedWindow[];
 };
 
 export type ClaudeSwapAccount = {
@@ -62,7 +67,7 @@ export type ClaudeSwapAccount = {
   organization?: string;
   /** claude-swap's own `usageStatus`; only `ok` carries `usage`. */
   usageStatus: string;
-  /** Parsed account-wide quota windows from `usage`. */
+  /** Parsed account-wide and scoped quota windows from `usage`. */
   usage?: ClaudeSwapUsage;
   /** When claude-swap measured `usage`. */
   fetchedAt?: string;
@@ -260,10 +265,35 @@ function parseUsage(value: unknown): ClaudeSwapUsage | undefined {
   if (!usage) throw new Error("claude_swap_malformed");
   const fiveHour = optionalWindow(usage, "fiveHour");
   const sevenDay = optionalWindow(usage, "sevenDay");
+  const scoped = optionalScopedWindows(usage.scoped);
   return {
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
+    ...(scoped.length > 0 ? { scoped } : {}),
   };
+}
+
+/** Keep only the scoped usage shape claude-swap exposes for named model limits. */
+function optionalScopedWindows(value: unknown): ClaudeSwapScopedWindow[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw): ClaudeSwapScopedWindow[] => {
+    const window = objectValue(raw);
+    const name =
+      typeof window?.name === "string" ? window.name.trim() : undefined;
+    const pct = window?.pct;
+    if (
+      !window ||
+      !name?.trim() ||
+      typeof pct !== "number" ||
+      !Number.isFinite(pct)
+    )
+      return [];
+    const resetsAt =
+      typeof window.resetsAt === "string" && validDate(window.resetsAt)
+        ? window.resetsAt
+        : undefined;
+    return [{ name, pct, ...(resetsAt ? { resetsAt } : {}) }];
+  });
 }
 
 function optionalWindow(

@@ -355,6 +355,14 @@ function claudeSwapQuota(account: ClaudeSwapAccount): ProviderQuota {
           "session",
         ),
         normalizeWindow(window(usage.sevenDay), "seven_day", "week", "weekly"),
+        ...(usage.scoped ?? []).map((scoped) =>
+          normalizeWindow(
+            window(scoped),
+            `model:${slugify(scoped.name)}`,
+            `${scoped.name} week`,
+            "model",
+          ),
+        ),
       ].filter((window): window is QuotaWindow => Boolean(window)),
       refreshedAt: account.fetchedAt,
       sourcesTried: [CLAUDE_SWAP_SOURCE],
