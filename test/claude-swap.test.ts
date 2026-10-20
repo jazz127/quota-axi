@@ -240,7 +240,7 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
     expect(report.schemaVersion).toBe(6);
     expect(report.providers.map(remaining)).toEqual([
       ["five_hour=91", "seven_day=7"],
-      ["five_hour=63", "seven_day=59"],
+      ["five_hour=63", "seven_day=59", "model:fable=88"],
     ]);
     expect(report.providers[0].windows[0].resetsAt).toBe(
       "2026-10-14T18:00:00.431135+00:00",
@@ -277,6 +277,33 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
     ]);
   });
 
+  it("omits absent or malformed scoped usage fields", async () => {
+    cswap(
+      list([
+        {
+          ...personal(),
+          usage: {
+            ...personal().usage,
+            scoped: [
+              {},
+              { pct: 100 },
+              { name: "Fable" },
+              { name: "  ", pct: 0 },
+            ],
+          },
+        },
+      ]),
+    );
+    vi.stubEnv("QUOTA_AXI_CLAUDE_SWAP", "1");
+
+    const [provider] = (await quota()).providers;
+
+    expect(provider.windows.map((window) => window.id)).toEqual([
+      "five_hour",
+      "seven_day",
+    ]);
+  });
+
   it("ignores an invalid profile list when claude-swap owns the quota read", async () => {
     cswap(list());
     vi.stubEnv("QUOTA_AXI_CLAUDE_SWAP", "1");
@@ -285,7 +312,7 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
     const report = await quota();
     expect(report.providers.map(remaining)).toEqual([
       ["five_hour=91", "seven_day=7"],
-      ["five_hour=63", "seven_day=59"],
+      ["five_hour=63", "seven_day=59", "model:fable=88"],
     ]);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -301,7 +328,7 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
     expect(report.providers).toHaveLength(2);
     expect(report.providers.map(remaining)).toEqual([
       ["five_hour=91", "seven_day=7"],
-      ["five_hour=63", "seven_day=59"],
+      ["five_hour=63", "seven_day=59", "model:fable=88"],
     ]);
     expect(fetch).not.toHaveBeenCalled();
   });
