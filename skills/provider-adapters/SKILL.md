@@ -73,11 +73,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 - **Credential Sources**:
   1. Grok CLI session auth: `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `~/.grok/auth.json`. Recognizes official Grok Build OIDC records scoped to `auth.x.ai` with `auth_mode: oidc`.
   2. Pi `xai` entry: `$PI_CODING_AGENT_DIR/auth.json` (OAuth or API key).
-- **Usability & Fallback**:
-  - Usable if either CLI or Pi source is usable. True sign-out requires all applicable sources unavailable or rejected.
-  - Consumer credits are fetched via `GetGrokCreditsConfig`. If rejected by an official Build/Pi OAuth token, probe the no-spend model catalog (`cli-chat-proxy.grok.com/v1/models` for Build, `api.x.ai/v1/models` for Pi), discard the response body, and report `authStatus: usable` with empty windows. Never derive quota from model presence.
-  - Pi API key establishes usable, unmeasurable model auth.
-  - Delegated refresh: Permitted via `grok models`. Cache fallback accepts only `web` source snapshots.
+- **Usability & Fallback**: Follow [README Provider `state`](../../README.md#provider-state) for auth, diagnostics, and stale-cache outcomes, and [Grok provider notes](../../README.md#provider-notes) for endpoint rejection evidence and delegated refresh.
 
 ---
 
