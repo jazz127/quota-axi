@@ -221,6 +221,9 @@ function grpcResponse(
   } = {},
 ): Response {
   let body = options.raw ? payload : grpcFrame(payload);
+  if (options.status === 403) {
+    body = new TextEncoder().encode("invalid credentials");
+  }
   if (!options.raw && options.trailerStatus !== undefined) {
     const trailerText = [
       `grpc-status: ${options.trailerStatus}`,
@@ -483,6 +486,7 @@ describe("Grok consumer quota acquisition", () => {
       "Content-Type": "application/grpc-web+proto",
       Origin: "https://grok.com",
       Referer: "https://grok.com/?_s=usage",
+      "User-Agent": expect.stringMatching(/^quota-axi\/\d+\.\d+\.\d+$/),
       "x-grpc-web": "1",
       "x-user-agent": "connect-es/2.1.1",
     });
@@ -568,22 +572,50 @@ describe("Grok consumer quota acquisition", () => {
   );
 
   it.each([
-    [401, {}, "Grok sign-in required (HTTP 401; server present)"],
+    [
+      401,
+      {},
+      "auth_required",
+      "Grok sign-in required (HTTP 401; server present)",
+      "private-body-secret",
+    ],
     [
       403,
       { "cf-mitigated": "challenge-secret" },
-      "Grok sign-in required (HTTP 403; cf-mitigated present; server present)",
+      "error",
+      "Grok quota blocked by edge (HTTP 403; cf-mitigated present; server present)",
+      "<html>challenge-secret</html>",
     ],
-    [403, {}, "Grok sign-in required (HTTP 403; server present)"],
+    [
+      403,
+      {},
+      "error",
+      "Grok quota forbidden (HTTP 403; server present)",
+      "private-body-secret",
+    ],
+    [
+      403,
+      { "content-type": "text/html" },
+      "error",
+      "Grok quota blocked by edge (HTTP 403; server present)",
+      "<html>challenge-secret</html>",
+    ],
+    [
+      403,
+      { "content-type": "application/json" },
+      "auth_required",
+      "Grok sign-in required (HTTP 403; server present)",
+      '{"error":"invalid credentials; private-body-secret"}',
+    ],
   ])(
-    "reports HTTP %i auth diagnostics without exposing response material",
-    async (httpStatus, headers, error) => {
+    "classifies HTTP %i auth and forbidden responses without exposing response material",
+    async (httpStatus, headers, status, error, body) => {
       writeValidAuth();
       vi.stubGlobal(
         "fetch",
         vi.fn(
           async () =>
-            new Response("private-body-secret", {
+            new Response(body, {
               status: httpStatus,
               headers: {
                 ...headers,
@@ -598,7 +630,7 @@ describe("Grok consumer quota acquisition", () => {
         refreshCredentials: false,
       });
 
-      expect(result.state).toMatchObject({ status: "auth_required", error });
+      expect(result.state).toMatchObject({ status, error });
       expect(result.state.error).toContain("server present");
       expect(result.state.error).not.toContain("challenge-secret");
       expect(result.state.error).not.toContain("origin-server-secret");
@@ -785,7 +817,7 @@ describe("Grok consumer quota acquisition", () => {
 
   it.each([
     [401, "auth_required", "Grok sign-in required (HTTP 401)"],
-    [403, "auth_required", "Grok sign-in required (HTTP 403)"],
+    [403, "error", "Grok quota forbidden (HTTP 403)"],
     [503, "error", "Grok quota unavailable"],
   ])("classifies HTTP %i safely", async (httpStatus, status, error) => {
     writeValidAuth();
@@ -979,7 +1011,7 @@ describe("Grok auth discovery", () => {
     });
 
     const error =
-      "Grok sign-in required (consumer quota HTTP 403; cf-mitigated present; model catalog HTTP 401; server present)";
+      "Grok sign-in required (model catalog HTTP 401; server present)";
     expect(result.state).toMatchObject({
       status: "auth_required",
       authStatus: "unusable",
@@ -1029,7 +1061,7 @@ describe("Grok auth discovery", () => {
       status: "unavailable",
       authStatus: "usable",
       error:
-        "Grok model access available; quota unavailable (consumer quota HTTP 403; cf-mitigated present)",
+        "Grok model access available; quota unavailable (consumer quota Grok quota blocked by edge (HTTP 403; cf-mitigated present))",
     });
   });
 
@@ -2845,8 +2877,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
 
     expect(result.state).toMatchObject({
       status: "auth_required",
-      error:
-        "Grok sign-in required (consumer quota HTTP 403; model catalog HTTP 403)",
+      error: "Grok sign-in required (model catalog HTTP 403)",
       authStatus: "unusable",
     });
     expect(result.state.reason).toBeUndefined();
