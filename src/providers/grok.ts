@@ -105,6 +105,7 @@ type GrokAttemptOutcome =
   | Exclude<AttemptOutcome<NormalizedGrokQuota>, { kind: "transient" }>
   | (Extract<AttemptOutcome<NormalizedGrokQuota>, { kind: "transient" }> & {
       operation: "consumer_quota" | "model_auth";
+      authUsable?: boolean;
     });
 
 type CredentialCandidate = GrokCredentials & {
@@ -239,6 +240,7 @@ async function fetchQuotaWithDependencies(
     (candidate) => candidate.source === PI_XAI_CREDENTIAL_SOURCE,
   );
   let consumerTransient = false;
+  let modelAuthUsable = false;
   const liveConsumerDiagnostics = new Map<string, string | undefined>();
   const attempt = async (
     candidate: SelectionCandidate<GrokAttemptCredential>,
@@ -258,6 +260,7 @@ async function fetchQuotaWithDependencies(
     }
     if (outcome.kind === "transient") {
       consumerTransient = outcome.operation === "consumer_quota";
+      modelAuthUsable ||= outcome.authUsable === true;
     }
     return outcome;
   };
@@ -332,7 +335,7 @@ async function fetchQuotaWithDependencies(
   }
 
   const authStatus =
-    selection.outcome === "live_no_quota"
+    selection.outcome === "live_no_quota" || modelAuthUsable
       ? "usable"
       : classifyGrokAuthStatus(cliState, piResolution, selection);
 
@@ -539,7 +542,7 @@ async function attemptGrokCandidate(
     } catch (error) {
       const message = errorMessage(error);
       if (error instanceof GrokForbiddenError) {
-        onConsumerDiagnostic?.(message);
+        let authUsable = false;
         if (payload.credentials.modelProbeUrl) {
           const probe = await probeGrokModelAccess(
             payload.credentials.modelProbeUrl,
@@ -551,14 +554,13 @@ async function attemptGrokCandidate(
               error: `${GROK_SIGN_IN_REQUIRED_ERROR} (model catalog ${probe.error})`,
             };
           }
-          return probe.kind === "transient"
-            ? { ...probe, operation: "model_auth" }
-            : { kind: "live_no_quota" };
+          authUsable = probe.kind === "live_no_quota";
         }
         return {
           kind: "transient",
           error: message,
           operation: "consumer_quota",
+          authUsable,
         };
       }
       if (error instanceof RateLimitError) {
@@ -647,9 +649,13 @@ async function probeGrokModelAccess(
             : "Grok model access probe unavailable",
       };
     }
+    const forbidden =
+      response.status === 403
+        ? await classifyForbiddenResponse(response)
+        : undefined;
     await response.body?.cancel().catch(() => undefined);
     if (response.ok) return { kind: "live_no_quota" };
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401 || forbidden === "rejected") {
       return {
         kind: "rejected",
         error: grokAuthFailureDetails(
@@ -1478,22 +1484,19 @@ async function rejectUnusableUsageResponse(response: Response): Promise<void> {
     );
   }
   if (response.status === 403) {
-    const body = await readForbiddenResponsePrefix(response);
-    if (
-      response.headers.has("cf-mitigated") ||
-      isHtmlResponse(response, body)
-    ) {
-      throw new GrokForbiddenError(
-        grokForbiddenError(response, "Grok quota blocked by edge"),
-      );
-    }
-    if (isCredentialRejection(body)) {
+    const forbidden = await classifyForbiddenResponse(response);
+    if (forbidden === "rejected") {
       throw new SafeGrokError(
         grokAuthFailureError(response.status, response.headers, "HTTP"),
       );
     }
     throw new GrokForbiddenError(
-      grokForbiddenError(response, "Grok quota forbidden"),
+      grokForbiddenError(
+        response,
+        forbidden === "edge"
+          ? "Grok quota blocked by edge"
+          : "Grok quota forbidden",
+      ),
     );
   }
   if (response.status === 429) {
@@ -1508,21 +1511,37 @@ function grokForbiddenError(response: Response, summary: string): string {
   return `${summary} (${grokAuthFailureDetails(response.status, response.headers, "HTTP")})`;
 }
 
+async function classifyForbiddenResponse(
+  response: Response,
+): Promise<"edge" | "rejected" | "forbidden"> {
+  const body = await readForbiddenResponsePrefix(response);
+  if (response.headers.has("cf-mitigated") || isHtmlResponse(response, body)) {
+    return "edge";
+  }
+  return isCredentialRejection(body) ? "rejected" : "forbidden";
+}
+
 async function readForbiddenResponsePrefix(
   response: Response,
 ): Promise<string> {
   if (!response.body) return "";
-  const reader = response.clone().body?.getReader();
-  if (!reader) return "";
+  const reader = response.body.getReader();
+  const prefix = new Uint8Array(2_048);
+  let size = 0;
   try {
-    const { value } = await reader.read();
-    return new TextDecoder().decode(
-      value?.subarray(0, 2_048) ?? new Uint8Array(),
-    );
+    while (size < prefix.length) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value.subarray(0, prefix.length - size);
+      prefix.set(chunk, size);
+      size += chunk.length;
+    }
+    return new TextDecoder().decode(prefix.subarray(0, size));
   } catch {
     return "";
   } finally {
     void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

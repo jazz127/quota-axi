@@ -1024,7 +1024,7 @@ describe("Grok auth discovery", () => {
     expect(JSON.stringify(result)).not.toContain("edge");
   });
 
-  it("reports the consumer status of the live Pi OAuth winner, not the rejected CLI session", async () => {
+  it("preserves the consumer edge failure after Pi OAuth model access succeeds", async () => {
     writeAuth({
       "https://auth.x.ai::official-cli-fixture": {
         key: "official-build-oauth-token-fixture",
@@ -1058,10 +1058,9 @@ describe("Grok auth discovery", () => {
     });
 
     expect(result.state).toMatchObject({
-      status: "unavailable",
+      status: "error",
       authStatus: "usable",
-      error:
-        "Grok model access available; quota unavailable (consumer quota Grok quota blocked by edge (HTTP 403; cf-mitigated present))",
+      error: "Grok quota blocked by edge (HTTP 403; cf-mitigated present)",
     });
   });
 
@@ -2004,12 +2003,13 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       "keeps catalog HTTP $status indeterminate, cache=$cached",
       async ({ cached, status }) => {
         if (cached) writeCachedProviders([cachedGrok("web")]);
-        const fetchMock = vi.fn(
-          async (url: string) =>
-            new Response(null, {
-              status: url === CONSUMER_QUOTA_URL ? 403 : status,
-              headers: { "retry-after": "60" },
-            }),
+        const fetchMock = vi.fn(async (url: string) =>
+          url === CONSUMER_QUOTA_URL
+            ? grpcResponse(new Uint8Array(), { status: 403 })
+            : new Response(null, {
+                status,
+                headers: { "retry-after": "60" },
+              }),
         );
         vi.stubGlobal("fetch", fetchMock);
 
@@ -2046,6 +2046,57 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
           CONSUMER_QUOTA_URL,
           source === "cli" ? GROK_BUILD_MODELS_URL : XAI_MODELS_URL,
         ]);
+      },
+    );
+
+    it.each([
+      { cached: false, status: 200 },
+      { cached: true, status: 200 },
+      { cached: false, status: 403 },
+      { cached: true, status: 403 },
+      { cached: false, status: 503 },
+      { cached: true, status: 503 },
+      { cached: false, status: 429 },
+      { cached: true, status: 429 },
+    ])(
+      "preserves a consumer edge failure through catalog HTTP $status, cache=$cached",
+      async ({ cached, status }) => {
+        if (cached) writeCachedProviders([cachedGrok("web")]);
+        const fetchMock = vi.fn(async (url: string) =>
+          url === CONSUMER_QUOTA_URL
+            ? new Response("<html>private-body-secret</html>", {
+                status: 403,
+              })
+            : new Response(null, { status }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const result = await fetchQuota({
+          allowKeychainPrompt: false,
+          refreshCredentials: false,
+        });
+
+        expect(result).toMatchObject({
+          source: cached ? "cache" : "unavailable",
+          windows: cached ? [{ percentRemaining: 80 }] : [],
+          state: {
+            status: cached ? "stale" : "error",
+            stale: cached,
+            authStatus:
+              status === 200 || expiry === "valid"
+                ? "usable"
+                : expiry === "refreshable"
+                  ? "expired_refreshable"
+                  : "unusable",
+            error: "Grok quota blocked by edge (HTTP 403)",
+          },
+        });
+        expect(readCachedProvider("grok") !== undefined).toBe(cached);
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+          CONSUMER_QUOTA_URL,
+          source === "cli" ? GROK_BUILD_MODELS_URL : XAI_MODELS_URL,
+        ]);
+        expect(JSON.stringify(result)).not.toContain("private-body-secret");
       },
     );
 
@@ -2630,7 +2681,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(null, { status: 403 })),
+      vi.fn(async () => new Response("invalid credentials", { status: 403 })),
     );
 
     const result = await fetchQuota({
@@ -2856,7 +2907,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     });
   });
 
-  it("does not treat an unusable Pi refresh reference as refreshable", async () => {
+  it("keeps an unconfirmed Pi 403 transient without treating a refresh reference as refreshable", async () => {
     writePiXaiAuth({
       xai: {
         type: "oauth",
@@ -2876,8 +2927,8 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     });
 
     expect(result.state).toMatchObject({
-      status: "auth_required",
-      error: "Grok sign-in required (model catalog HTTP 403)",
+      status: "error",
+      error: "Grok quota forbidden (HTTP 403)",
       authStatus: "unusable",
     });
     expect(result.state.reason).toBeUndefined();
@@ -2976,7 +3027,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(null, { status: 403 })),
+      vi.fn(async () => new Response("invalid credentials", { status: 403 })),
     );
 
     const jsonText = await captureCli(["--provider", "grok", "--json"]);
@@ -3065,6 +3116,167 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       },
     ]);
   });
+});
+
+describe.each(["consumer", "cli catalog", "pi catalog"])(
+  "Grok bounded 403 classification at %s",
+  (endpoint) => {
+    it.each([
+      {
+        label: "credential rejection split across chunks",
+        chunks: ['{"error":"inv', 'alid credentials; private-body-secret"}'],
+        rejected: true,
+        open: false,
+        headers: {},
+      },
+      {
+        label: "HTML challenge split across chunks",
+        chunks: ["<ht", "ml>invalid credentials; private-body-secret</html>"],
+        rejected: false,
+        open: false,
+        headers: {},
+      },
+      {
+        label: "challenge header overrides credential wording",
+        chunks: ['{"error":"invalid credentials; private-body-secret"}'],
+        rejected: false,
+        open: false,
+        headers: { "cf-mitigated": "private-challenge-secret" },
+      },
+      {
+        label: "unexplained forbidden response",
+        chunks: ['{"error":"forbidden; private-body-secret"}'],
+        rejected: false,
+        open: false,
+        headers: {},
+      },
+      {
+        label: "rejection beyond the 2048-byte limit",
+        chunks: ["é".repeat(1024), "invalid credentials; private-body-secret"],
+        rejected: false,
+        open: true,
+        headers: {},
+      },
+      {
+        label: "oversized chunk with rejection beyond the limit",
+        chunks: [" ".repeat(2048) + "invalid credentials; private-body-secret"],
+        rejected: false,
+        open: true,
+        headers: {},
+      },
+    ])(
+      "classifies $label without disclosing body content",
+      async ({ chunks, rejected, open, headers }) => {
+        if (endpoint === "consumer") {
+          writeValidAuth();
+        } else if (endpoint === "cli catalog") {
+          writeAuth({
+            "https://auth.x.ai::fixture-client": {
+              key: "oidc-token-fixture",
+              auth_mode: "oidc",
+              expires_at: "2035-01-01T00:00:00.000Z",
+            },
+          });
+        } else {
+          writeValidPiXaiOauth();
+        }
+        writeCachedProviders([cachedGrok("web")]);
+        let pulled = 0;
+        const cancel = vi.fn();
+        const body = new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              if (pulled < chunks.length) {
+                controller.enqueue(new TextEncoder().encode(chunks[pulled++]));
+              } else if (!open) {
+                controller.close();
+              }
+            },
+            cancel,
+          },
+          { highWaterMark: 0 },
+        );
+        const fetchMock = vi.fn(async (url: string) =>
+          endpoint !== "consumer" && url === CONSUMER_QUOTA_URL
+            ? new Response(null, { status: 401 })
+            : new Response(body, { status: 403, headers }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const result = await fetchQuota({
+          allowKeychainPrompt: false,
+          refreshCredentials: false,
+        });
+
+        expect(result.state).toMatchObject({
+          status: rejected
+            ? "auth_required"
+            : endpoint === "consumer"
+              ? "stale"
+              : "error",
+          authStatus: rejected ? "unusable" : "usable",
+        });
+        expect(readCachedProvider("grok") !== undefined).toBe(!rejected);
+        expect(fetchMock).toHaveBeenCalledTimes(
+          endpoint === "consumer" ? 1 : 2,
+        );
+        if (open) {
+          expect(pulled).toBe(1);
+          expect(cancel).toHaveBeenCalledOnce();
+        }
+        const output = JSON.stringify([result, readCachedProvider("grok")]);
+        expect(output).not.toContain("private-body-secret");
+        expect(output).not.toContain("private-challenge-secret");
+      },
+    );
+  },
+);
+
+describe("Grok consumer edge failures", () => {
+  it.each([200, 403, 503, 429])(
+    "stops sibling CLI and Pi handover after catalog HTTP %i",
+    async (status) => {
+      writeAuth({
+        "https://auth.x.ai::first-client": {
+          key: "edge-blocked-token",
+          auth_mode: "oidc",
+          expires_at: "2035-01-01T00:00:00.000Z",
+        },
+        "https://auth.x.ai::second-client": {
+          key: "sibling-token",
+          auth_mode: "oidc",
+          expires_at: "2035-01-01T00:00:00.000Z",
+        },
+      });
+      writeValidPiXaiOauth();
+      writeCachedProviders([cachedGrok("web")]);
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        const authorization = (init?.headers as Record<string, string>)
+          .Authorization;
+        if (authorization !== "Bearer edge-blocked-token")
+          return grpcResponse();
+        return url === CONSUMER_QUOTA_URL
+          ? new Response("<html>edge challenge</html>", { status: 403 })
+          : new Response(null, { status });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.state).toMatchObject({
+        status: "stale",
+        authStatus: "usable",
+        error: "Grok quota blocked by edge (HTTP 403)",
+      });
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        CONSUMER_QUOTA_URL,
+        GROK_BUILD_MODELS_URL,
+      ]);
+    },
+  );
 });
 
 describe("Grok cache provenance", () => {
