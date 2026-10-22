@@ -4,6 +4,7 @@ import { readCachedProvider, retireCachedSlot } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
 import { providerFetch } from "../lib/http.js";
 import { nowIso, retryAfterToIso } from "../lib/time.js";
+import { VERSION } from "../version.js";
 import type {
   AuthProviderReport,
   AuthSourceReport,
@@ -47,6 +48,7 @@ const GROK_BUILD_MODELS_URL = "https://cli-chat-proxy.grok.com/v1/models";
 const XAI_MODELS_URL = "https://api.x.ai/v1/models";
 const API_TIMEOUT_MS = 15_000;
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
+const GROK_USER_AGENT = `quota-axi/${VERSION}`;
 const GRPC_MESSAGE_LIMIT_CHARS = 1_024;
 const EMPTY_GRPC_REQUEST = Uint8Array.from([0, 0, 0, 0, 0]);
 const GROK_SOURCE = "web" as const;
@@ -103,6 +105,7 @@ type GrokAttemptOutcome =
   | Exclude<AttemptOutcome<NormalizedGrokQuota>, { kind: "transient" }>
   | (Extract<AttemptOutcome<NormalizedGrokQuota>, { kind: "transient" }> & {
       operation: "consumer_quota" | "model_auth";
+      authUsable?: boolean;
     });
 
 type CredentialCandidate = GrokCredentials & {
@@ -237,6 +240,7 @@ async function fetchQuotaWithDependencies(
     (candidate) => candidate.source === PI_XAI_CREDENTIAL_SOURCE,
   );
   let consumerTransient = false;
+  let modelAuthUsable = false;
   const liveConsumerDiagnostics = new Map<string, string | undefined>();
   const attempt = async (
     candidate: SelectionCandidate<GrokAttemptCredential>,
@@ -256,6 +260,7 @@ async function fetchQuotaWithDependencies(
     }
     if (outcome.kind === "transient") {
       consumerTransient = outcome.operation === "consumer_quota";
+      modelAuthUsable ||= outcome.authUsable === true;
     }
     return outcome;
   };
@@ -330,7 +335,7 @@ async function fetchQuotaWithDependencies(
   }
 
   const authStatus =
-    selection.outcome === "live_no_quota"
+    selection.outcome === "live_no_quota" || modelAuthUsable
       ? "usable"
       : classifyGrokAuthStatus(cliState, piResolution, selection);
 
@@ -528,7 +533,7 @@ function mergeIndependentSelections<R>(
 
 async function attemptGrokCandidate(
   payload: GrokAttemptCredential,
-  onConsumerAuthFailure?: (diagnostic: string) => void,
+  onConsumerDiagnostic?: (diagnostic: string) => void,
 ): Promise<GrokAttemptOutcome> {
   if (payload.kind === "cli" || payload.kind === "pi-credits") {
     try {
@@ -536,6 +541,28 @@ async function attemptGrokCandidate(
       return { kind: "quota", result: quota };
     } catch (error) {
       const message = errorMessage(error);
+      if (error instanceof GrokForbiddenError) {
+        let authUsable = false;
+        if (payload.credentials.modelProbeUrl) {
+          const probe = await probeGrokModelAccess(
+            payload.credentials.modelProbeUrl,
+            payload.credentials.key,
+          );
+          if (probe.kind === "rejected") {
+            return {
+              kind: "rejected",
+              error: `${GROK_SIGN_IN_REQUIRED_ERROR} (model catalog ${probe.error})`,
+            };
+          }
+          authUsable = probe.kind === "live_no_quota";
+        }
+        return {
+          kind: "transient",
+          error: message,
+          operation: "consumer_quota",
+          authUsable,
+        };
+      }
       if (error instanceof RateLimitError) {
         return {
           kind: "transient",
@@ -546,7 +573,7 @@ async function attemptGrokCandidate(
       }
       if (isDefinitiveGrokAuthError(message)) {
         const consumerDiagnostic = grokAuthFailureDetailsFromError(message);
-        onConsumerAuthFailure?.(consumerDiagnostic);
+        onConsumerDiagnostic?.(consumerDiagnostic);
         if (payload.credentials.modelProbeUrl) {
           const probe = await probeGrokModelAccess(
             payload.credentials.modelProbeUrl,
@@ -622,9 +649,13 @@ async function probeGrokModelAccess(
             : "Grok model access probe unavailable",
       };
     }
+    const forbidden =
+      response.status === 403
+        ? await classifyForbiddenResponse(response)
+        : undefined;
     await response.body?.cancel().catch(() => undefined);
     if (response.ok) return { kind: "live_no_quota" };
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401 || forbidden === "rejected") {
       return {
         kind: "rejected",
         error: grokAuthFailureDetails(
@@ -1012,6 +1043,7 @@ async function fetchGrokConsumerQuota(
           "Content-Type": "application/grpc-web+proto",
           Origin: "https://grok.com",
           Referer: "https://grok.com/?_s=usage",
+          "User-Agent": GROK_USER_AGENT,
           "x-grpc-web": "1",
           "x-user-agent": "connect-es/2.1.1",
         },
@@ -1024,7 +1056,7 @@ async function fetchGrokConsumerQuota(
       throw new SafeGrokError("Grok quota unavailable");
     }
 
-    rejectUnusableUsageResponse(response);
+    await rejectUnusableUsageResponse(response);
     throwForGrpcStatus(
       response.headers.get("grpc-status"),
       response.headers.get("grpc-message"),
@@ -1445,10 +1477,26 @@ function grokHomeDir(): string {
   return process.env.GROK_HOME || join(homedir(), ".grok");
 }
 
-function rejectUnusableUsageResponse(response: Response): void {
-  if (response.status === 401 || response.status === 403) {
+async function rejectUnusableUsageResponse(response: Response): Promise<void> {
+  if (response.status === 401) {
     throw new SafeGrokError(
       grokAuthFailureError(response.status, response.headers, "HTTP"),
+    );
+  }
+  if (response.status === 403) {
+    const forbidden = await classifyForbiddenResponse(response);
+    if (forbidden === "rejected") {
+      throw new SafeGrokError(
+        grokAuthFailureError(response.status, response.headers, "HTTP"),
+      );
+    }
+    throw new GrokForbiddenError(
+      grokForbiddenError(
+        response,
+        forbidden === "edge"
+          ? "Grok quota blocked by edge"
+          : "Grok quota forbidden",
+      ),
     );
   }
   if (response.status === 429) {
@@ -1457,6 +1505,61 @@ function rejectUnusableUsageResponse(response: Response): void {
     );
   }
   if (!response.ok) throw new SafeGrokError("Grok quota unavailable");
+}
+
+function grokForbiddenError(response: Response, summary: string): string {
+  return `${summary} (${grokAuthFailureDetails(response.status, response.headers, "HTTP")})`;
+}
+
+async function classifyForbiddenResponse(
+  response: Response,
+): Promise<"edge" | "rejected" | "forbidden"> {
+  const body = await readForbiddenResponsePrefix(response);
+  if (response.headers.has("cf-mitigated") || isHtmlResponse(response, body)) {
+    return "edge";
+  }
+  return isCredentialRejection(body) ? "rejected" : "forbidden";
+}
+
+async function readForbiddenResponsePrefix(
+  response: Response,
+): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const prefix = new Uint8Array(2_048);
+  let size = 0;
+  try {
+    while (size < prefix.length) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value.subarray(0, prefix.length - size);
+      prefix.set(chunk, size);
+      size += chunk.length;
+    }
+    return new TextDecoder().decode(prefix.subarray(0, size));
+  } catch {
+    return "";
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+function isHtmlResponse(response: Response, body: string): boolean {
+  return (
+    /(?:^|\s|;)text\/html(?:\s|;|$)/i.test(
+      response.headers.get("content-type") ?? "",
+    ) || /^\s*(?:<!doctype\s+html|<html\b|<head\b|<body\b)/i.test(body)
+  );
+}
+
+function isCredentialRejection(body: string): boolean {
+  return (
+    /\b(?:invalid|expired|revoked|missing)\s+(?:(?:oauth|access|auth(?:entication)?|bearer)\s+)*(?:token|credentials?|jwt)\b/i.test(
+      body,
+    ) ||
+    /\b(?:unauthorized|authentication failed|invalid credentials)\b/i.test(body)
+  );
 }
 
 function isExpired(value: string | undefined): boolean {
@@ -1615,6 +1718,8 @@ function errorMessage(error: unknown): string {
 }
 
 class SafeGrokError extends Error {}
+
+class GrokForbiddenError extends SafeGrokError {}
 
 class ProtocolError extends SafeGrokError {
   constructor() {

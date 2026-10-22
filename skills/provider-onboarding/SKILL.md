@@ -74,7 +74,7 @@ Shared machinery lives in `src/providers/delegated-refresh.ts`. Command boundari
 - **Eligibility criteria**: A delegate is eligible ONLY when:
   1. The same stored access token is expired,
   2. The stored credential carries a refresh token, and
-  3. The token was definitively rejected (HTTP 401/403) by the vendor's quota/user endpoint.
+  3. The token was definitively rejected under the provider-specific rules in [README Provider notes](../../README.md#provider-notes).
 - **Mechanism**: quota-axi executes the vendor CLI's own smallest non-interactive rotation command (e.g. `claude doctor`, `grok models`) and re-reads the file/store that CLI updated.
 - **Never exchange tokens**: quota-axi must never perform an OAuth refresh-token exchange itself. These tokens rotate on use; a second exchange signs the user out of the measured tool.
 - **Presence only**: Delegated refresh inspects the refresh token's presence only (`Object.hasOwn(credential, "refresh_token")`). quota-axi never retains, logs, renders, caches, or sends its value. Pi brokers may read a stored refresh value only to classify it as a usable literal, then discard it.
