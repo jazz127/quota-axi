@@ -72,6 +72,95 @@ afterEach(() => {
 });
 
 describe("reset prediction cache", () => {
+  describe.each(["cached", "fresh", "injected"] as const)(
+    "%s reads",
+    (path) => {
+      it.each(
+        forecasts.flatMap((forecast) => [
+          { ...forecast, offset: -1, answered: 1 },
+          {
+            ...forecast,
+            offset: 0,
+            answered: forecast.source === "resetbeacon" ? 0 : 1,
+          },
+          { ...forecast, offset: 1, answered: 0 },
+        ]),
+      )(
+        "checks $source expiry after a sibling settles at deadline $offset ms",
+        async ({ source, payload, offset, answered }) => {
+          const { fetchResetPredictions } =
+            await import("../src/reset-predictions.js");
+          if (path === "cached") {
+            vi.mocked(fetch).mockResolvedValueOnce(Response.json(payload));
+            expect(await fetchResetPredictions([source])).toMatchObject({
+              answered: 1,
+            });
+          }
+          vi.mocked(fetch).mockReset();
+          let finishSlowRead!: (response: Response) => void;
+          const slowResponse = new Promise<Response>((resolve) => {
+            finishSlowRead = resolve;
+          });
+          const transport = vi.fn((input: string | URL | Request) =>
+            String(input).includes(source)
+              ? Promise.resolve(Response.json(payload))
+              : slowResponse,
+          );
+          vi.mocked(fetch).mockImplementation(transport);
+          const sibling = source === "recodex" ? "lunarwerx" : "recodex";
+          vi.setSystemTime(NOW + EXPIRES_IN_MS - 1_000);
+          const pending = fetchResetPredictions(
+            [source, sibling],
+            path === "injected" ? transport : undefined,
+          );
+          vi.setSystemTime(NOW + EXPIRES_IN_MS + offset);
+          finishSlowRead(new Response("busy", { status: 503 }));
+
+          expect(await pending).toEqual({
+            readings: [
+              answered
+                ? { source, verdict: "reset", probabilityPercent: 80 }
+                : { source, verdict: "unavailable" },
+              { source: sibling, verdict: "unavailable" },
+            ],
+            predicting: answered,
+            answered,
+            unavailable: 2 - answered,
+            ...(answered ? { percent: 100 } : {}),
+          });
+          expect(transport).toHaveBeenCalledTimes(path === "cached" ? 1 : 2);
+        },
+      );
+    },
+  );
+
+  it.each([
+    { elapsed: EXPIRES_IN_MS - 1, answered: 1 },
+    { elapsed: EXPIRES_IN_MS, answered: 0 },
+    { elapsed: EXPIRES_IN_MS + 1, answered: 0 },
+  ])(
+    "advances explicit now by the response's $elapsed ms duration",
+    async ({ elapsed, answered }) => {
+      const { fetchResetPredictions } =
+        await import("../src/reset-predictions.js");
+      const wallTime = NOW + 86_400_000;
+      vi.setSystemTime(wallTime);
+      const fetcher = vi.fn(async () => {
+        vi.setSystemTime(wallTime + elapsed);
+        return Response.json({
+          displayMode: "probability",
+          publicationState: "published",
+          validUntil: NOW + EXPIRES_IN_MS,
+          probabilities: { h24: { display: 80 } },
+        });
+      });
+
+      expect(
+        await fetchResetPredictions(["resetbeacon"], fetcher, NOW),
+      ).toMatchObject({ answered, unavailable: 1 - answered });
+    },
+  );
+
   it.each(forecasts)(
     "expires a cached $source vote without polling before its interval",
     async ({ source, interval, payload }) => {

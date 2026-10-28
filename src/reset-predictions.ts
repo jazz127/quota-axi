@@ -36,9 +36,10 @@ const MIN_POLL_MS: Record<ResetPredictionSource, number> = {
   gussuri: 600_000,
   recodex: 300_000,
 };
+type TimedReading = { reading: ResetPredictionReading; expiresAt?: number };
 const recentReads = new Map<
   ResetPredictionSource,
-  { at: number; reading: ResetPredictionReading; expiresAt?: number }
+  TimedReading & { at: number }
 >();
 
 type ParsedForecast = { probabilityPercent: number; expiresAt: number };
@@ -81,11 +82,11 @@ export async function fetchResetPredictions(
   fetcher: typeof providerFetch = providerFetch,
   now: number = Date.now(),
 ): Promise<ResetPredictionAggregate> {
+  const startedAt = Date.now();
   const readings = await Promise.all(
-    selected.map(async (source): Promise<ResetPredictionReading> => {
-      const unavailable: ResetPredictionReading = {
-        source,
-        verdict: "unavailable",
+    selected.map(async (source): Promise<TimedReading> => {
+      const unavailable: TimedReading = {
+        reading: { source, verdict: "unavailable" },
       };
       const recent =
         fetcher === providerFetch ? recentReads.get(source) : undefined;
@@ -93,22 +94,12 @@ export async function fetchResetPredictions(
         recent &&
         now - recent.at >= 0 &&
         now - recent.at < MIN_POLL_MS[source]
-      ) {
-        // The polling interval bounds requests, not the forecast's lifetime.
-        // Preserve the parser's inclusive age limit and exclusive validUntil.
-        if (
-          recent.expiresAt !== undefined &&
-          (source === "resetbeacon"
-            ? now >= recent.expiresAt
-            : now > recent.expiresAt)
-        )
-          return unavailable;
-        return recent.reading;
-      }
+      )
+        return recent;
       // Record the attempt before I/O so failures and in-flight reads also
       // respect the minimum polling interval. Keep only normalized data.
       if (fetcher === providerFetch)
-        recentReads.set(source, { at: now, reading: unavailable });
+        recentReads.set(source, { at: now, ...unavailable });
       try {
         const response = await fetcher(ENDPOINTS[source], {
           headers: {
@@ -123,24 +114,33 @@ export async function fetchResetPredictions(
         if (body.length > 262_144) return unavailable;
         const forecast = parseForecast(source, JSON.parse(body), now);
         if (forecast === undefined) return unavailable;
-        const reading: ResetPredictionReading = {
-          source,
-          verdict: forecast.probabilityPercent >= 50 ? "reset" : "none",
-          probabilityPercent: forecast.probabilityPercent,
+        const result: TimedReading = {
+          reading: {
+            source,
+            verdict: forecast.probabilityPercent >= 50 ? "reset" : "none",
+            probabilityPercent: forecast.probabilityPercent,
+          },
+          expiresAt: forecast.expiresAt,
         };
         if (fetcher === providerFetch)
-          recentReads.set(source, {
-            at: now,
-            reading,
-            expiresAt: forecast.expiresAt,
-          });
-        return reading;
+          recentReads.set(source, { at: now, ...result });
+        return result;
       } catch {
         return unavailable;
       }
     }),
   );
-  return aggregateResetPredictions(readings);
+  const settledAt = now + Math.max(0, Date.now() - startedAt);
+  return aggregateResetPredictions(
+    readings.map(({ reading, expiresAt }) =>
+      expiresAt !== undefined &&
+      (reading.source === "resetbeacon"
+        ? settledAt >= expiresAt
+        : settledAt > expiresAt)
+        ? { source: reading.source, verdict: "unavailable" }
+        : reading,
+    ),
+  );
 }
 
 /** Only documented, observed fields; a changed or expired shape is unavailable. */
