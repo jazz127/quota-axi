@@ -36,10 +36,13 @@ const MIN_POLL_MS: Record<ResetPredictionSource, number> = {
   gussuri: 600_000,
   recodex: 300_000,
 };
+type TimedReading = { reading: ResetPredictionReading; expiresAt?: number };
 const recentReads = new Map<
   ResetPredictionSource,
-  { at: number; reading: ResetPredictionReading }
+  TimedReading & { at: number }
 >();
+
+type ParsedForecast = { probabilityPercent: number; expiresAt: number };
 
 /** A source votes yes only at 50% or more; missing evidence never votes no. */
 export function aggregateResetPredictions(
@@ -79,8 +82,12 @@ export async function fetchResetPredictions(
   fetcher: typeof providerFetch = providerFetch,
   now: number = Date.now(),
 ): Promise<ResetPredictionAggregate> {
+  const startedAt = Date.now();
   const readings = await Promise.all(
-    selected.map(async (source): Promise<ResetPredictionReading> => {
+    selected.map(async (source): Promise<TimedReading> => {
+      const unavailable: TimedReading = {
+        reading: { source, verdict: "unavailable" },
+      };
       const recent =
         fetcher === providerFetch ? recentReads.get(source) : undefined;
       if (
@@ -88,7 +95,11 @@ export async function fetchResetPredictions(
         now - recent.at >= 0 &&
         now - recent.at < MIN_POLL_MS[source]
       )
-        return recent.reading;
+        return recent;
+      // Record the attempt before I/O so failures and in-flight reads also
+      // respect the minimum polling interval. Keep only normalized data.
+      if (fetcher === providerFetch)
+        recentReads.set(source, { at: now, ...unavailable });
       try {
         const response = await fetcher(ENDPOINTS[source], {
           headers: {
@@ -98,26 +109,38 @@ export async function fetchResetPredictions(
           },
           signal: AbortSignal.timeout(8_000),
         });
-        if (!response.ok) return { source, verdict: "unavailable" };
+        if (!response.ok) return unavailable;
         const body = await response.text();
-        if (body.length > 262_144) return { source, verdict: "unavailable" };
-        const probability = parseResetPrediction(source, JSON.parse(body), now);
-        if (probability === undefined)
-          return { source, verdict: "unavailable" };
-        const reading: ResetPredictionReading = {
-          source,
-          verdict: probability >= 50 ? "reset" : "none",
-          probabilityPercent: probability,
+        if (body.length > 262_144) return unavailable;
+        const forecast = parseForecast(source, JSON.parse(body), now);
+        if (forecast === undefined) return unavailable;
+        const result: TimedReading = {
+          reading: {
+            source,
+            verdict: forecast.probabilityPercent >= 50 ? "reset" : "none",
+            probabilityPercent: forecast.probabilityPercent,
+          },
+          expiresAt: forecast.expiresAt,
         };
         if (fetcher === providerFetch)
-          recentReads.set(source, { at: now, reading });
-        return reading;
+          recentReads.set(source, { at: now, ...result });
+        return result;
       } catch {
-        return { source, verdict: "unavailable" };
+        return unavailable;
       }
     }),
   );
-  return aggregateResetPredictions(readings);
+  const settledAt = now + Math.max(0, Date.now() - startedAt);
+  return aggregateResetPredictions(
+    readings.map(({ reading, expiresAt }) =>
+      expiresAt !== undefined &&
+      (reading.source === "resetbeacon"
+        ? settledAt >= expiresAt
+        : settledAt > expiresAt)
+        ? { source: reading.source, verdict: "unavailable" }
+        : reading,
+    ),
+  );
 }
 
 /** Only documented, observed fields; a changed or expired shape is unavailable. */
@@ -126,17 +149,33 @@ export function parseResetPrediction(
   payload: unknown,
   now: number,
 ): number | undefined {
+  return parseForecast(source, payload, now)?.probabilityPercent;
+}
+
+function parseForecast(
+  source: ResetPredictionSource,
+  payload: unknown,
+  now: number,
+): ParsedForecast | undefined {
   const root = object(payload);
   if (!root) return undefined;
   switch (source) {
     case "codex-reset": {
-      if (!fresh(root.updated_at, now, 15 * 60_000)) return undefined;
-      return percentage(object(root.probabilities)?.model_24h);
+      return datedForecast(
+        percentage(object(root.probabilities)?.model_24h),
+        root.updated_at,
+        now,
+        15 * 60_000,
+      );
     }
     case "lunarwerx": {
-      if (root.apiVersion !== "1" || !fresh(root.generatedAt, now, 15 * 60_000))
-        return undefined;
-      return fraction(object(root.next24Hours)?.probability);
+      if (root.apiVersion !== "1") return undefined;
+      return datedForecast(
+        fraction(object(root.next24Hours)?.probability),
+        root.generatedAt,
+        now,
+        15 * 60_000,
+      );
     }
     case "resetbeacon": {
       if (
@@ -148,27 +187,37 @@ export function parseResetPrediction(
         return undefined;
       const validUntil = instant(root.validUntil);
       if (validUntil === undefined || validUntil <= now) return undefined;
-      return percentage(object(object(root.probabilities)?.h24)?.display);
+      const probabilityPercent = percentage(
+        object(object(root.probabilities)?.h24)?.display,
+      );
+      return probabilityPercent === undefined
+        ? undefined
+        : { probabilityPercent, expiresAt: validUntil };
     }
     case "gussuri": {
       const health = object(root.dataHealth);
       if (
         root.schemaVersion !== "public-v1" ||
         health?.overall !== "ok" ||
-        health.stale !== false ||
-        !fresh(root.checkedAt, now, 15 * 60_000)
+        health.stale !== false
       )
         return undefined;
-      return fraction(object(root.viewModel)?.probability24h);
+      return datedForecast(
+        fraction(object(root.viewModel)?.probability24h),
+        root.checkedAt,
+        now,
+        15 * 60_000,
+      );
     }
     case "recodex": {
-      if (
-        typeof root.version !== "string" ||
-        !root.version.startsWith("1.") ||
-        !fresh(root.computed_at, now, 2 * 60 * 60_000)
-      )
+      if (typeof root.version !== "string" || !root.version.startsWith("1."))
         return undefined;
-      return fraction(root.p24);
+      return datedForecast(
+        fraction(root.p24),
+        root.computed_at,
+        now,
+        2 * 60 * 60_000,
+      );
     }
   }
 }
@@ -207,11 +256,17 @@ function instant(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function fresh(value: unknown, now: number, maxAge: number): boolean {
+function datedForecast(
+  probabilityPercent: number | undefined,
+  value: unknown,
+  now: number,
+  maxAge: number,
+): ParsedForecast | undefined {
   const timestamp = instant(value);
-  return (
+  return probabilityPercent !== undefined &&
     timestamp !== undefined &&
     timestamp <= now + 60_000 &&
     now - timestamp <= maxAge
-  );
+    ? { probabilityPercent, expiresAt: timestamp + maxAge }
+    : undefined;
 }

@@ -216,25 +216,19 @@ export function normalizeDeepSeekPayload(
 function computeCredits(
   metrics: NormalizedDeepSeekPayload["metrics"],
 ): ProviderQuota["credits"] | undefined {
-  const usdTotal = metrics.find(
-    (m) => m.currency === "USD" && m.id === "usd-total",
-  );
-  if (usdTotal) {
-    const value = Number(usdTotal.value);
-    if (Number.isFinite(value)) {
-      return { remaining: value, unit: "usd" };
-    }
+  // Wallets are separate currencies and are never converted or summed. The
+  // envelope holds one balance, so a funded wallet wins over an empty one.
+  const wallets: NonNullable<ProviderQuota["credits"]>[] = [];
+  for (const [currency, id, unit] of [
+    ["USD", "usd-total", "usd"],
+    ["CNY", "cny-total", "cny"],
+  ] as const) {
+    const metric = metrics.find((m) => m.currency === currency && m.id === id);
+    if (!metric) continue;
+    const value = Number(metric.value);
+    if (Number.isFinite(value)) wallets.push({ remaining: value, unit });
   }
-  const cnyTotal = metrics.find(
-    (m) => m.currency === "CNY" && m.id === "cny-total",
-  );
-  if (cnyTotal) {
-    const value = Number(cnyTotal.value);
-    if (Number.isFinite(value)) {
-      return { remaining: value, unit: "credits" };
-    }
-  }
-  return undefined;
+  return wallets.find((w) => (w.remaining ?? 0) > 0) ?? wallets[0];
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

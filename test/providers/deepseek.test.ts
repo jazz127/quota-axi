@@ -60,6 +60,48 @@ describe("DeepSeek provider", () => {
     );
   });
 
+  it("reports a funded CNY wallet when the USD wallet is empty", async () => {
+    const wallets = (balance_infos: unknown[]) =>
+      createDeepSeekAdapter({
+        credential: () => ({
+          status: "available",
+          key: KEY,
+          source: "env:DEEPSEEK_API_KEY",
+        }),
+        fetch: vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({ is_available: true, balance_infos }),
+              {
+                headers: { "content-type": "application/json" },
+              },
+            ),
+        ),
+        now: () => Date.parse("2026-09-01T00:00:00.000Z"),
+      }).fetchQuota(OPTIONS);
+    const usd = (total_balance: string) => ({
+      currency: "USD",
+      total_balance,
+    });
+    const cny = (total_balance: string) => ({
+      currency: "CNY",
+      total_balance,
+    });
+
+    expect((await wallets([usd("0.00"), cny("10.00")])).credits).toEqual({
+      remaining: 10,
+      unit: "cny",
+    });
+    expect((await wallets([cny("10.00")])).credits).toEqual({
+      remaining: 10,
+      unit: "cny",
+    });
+    expect((await wallets([usd("0.00"), cny("0.00")])).credits).toEqual({
+      remaining: 0,
+      unit: "usd",
+    });
+  });
+
   it("tries Pi auth after an environment key is rejected", async () => {
     const request = vi.fn(async (_url: string, init?: RequestInit) => {
       const bearer = new Headers(init?.headers).get("authorization");
