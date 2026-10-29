@@ -59,9 +59,10 @@ This reference details the credential sources, endpoint contracts, quota window 
 - **Credential Sources** (`COPILOT_SOURCE_ORDER`):
   1. `api`: `$GITHUB_COPILOT_APPS_JSON` or local `github-copilot/apps.json`.
   2. `copilot-cli:keychain`: Native secure store for standalone Copilot CLI (macOS Keychain or Windows Credential Manager via `src/lib/windows-credential.ts`).
-  3. `gh:hosts.yml`: Narrow block-mapping reader in `src/providers/gh-cli-credential.ts` that extracts only the `github.com` host `oauth_token`. Never read the `gh` keyring or `GH_TOKEN`/`GITHUB_TOKEN`.
+  3. `copilot-cli:config`: Plaintext `authTokens` fallback for the exact selected public account on any platform.
+  4. `gh:hosts.yml`: Narrow block-mapping reader in `src/providers/gh-cli-credential.ts` that extracts the selected host's `oauth_token` (`github.com` unless `QUOTA_AXI_COPILOT_HOST` names a `*.ghe.com` host). Never read the `gh` keyring or `GH_TOKEN`/`GITHUB_TOKEN`.
 - **Scope & Entitlement**:
-  - Public GitHub tokens only. Enterprise tokens are treated as unavailable on the public endpoint.
+  - Host selection, endpoint restrictions, CLI-source eligibility, and cache isolation follow the [README Copilot provider notes](../../README.md#provider-notes).
   - Quota snapshot windows include `chat`, `completions`, and `premium_interactions`.
   - If the endpoint returns entitlement without numeric quota windows, return a fresh report with `windows: []` rather than inventing numbers or percentages.
   - Native CLI readings (`source: cli`) are never cached.
@@ -106,7 +107,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 
 - **Quota Semantics**: Rolling 5-hour ($12), weekly ($30), and monthly ($60) stacked plan caps jointly bind `all_models`. Requests are blocked when any cap is hit.
 - **Limitations**: The endpoint supplies no cycle duration of its own, so plan-declared cycle lengths fill in when the payload carries none (a payload-supplied duration still wins) and pace, runway, and selection are measurable. The endpoint provides no Zen balance. An exhausted plan window with balance fallback reports plan-exhausted with fallback named in prose.
-- **Sources**: `defaultOpenCodeGoCredentialSources` (supports opt-in Pi auth). Read-only; no refresh delegate.
+- **Sources**: `defaultOpenCodeGoCredentialSources` (opt-in Pi auth, then OpenCode 2.x's read-only `opencode.db` `credential` row `opencode:opencode.db`, then legacy `opencode:auth.json`). Read-only; no refresh delegate.
 
 ---
 

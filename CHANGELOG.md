@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.1.69](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.68...quota-axi-v0.1.69) (2026-10-29)
+
+
+### Bug Fixes
+
+* prevent stale Z.AI quota reuse after key rotation ([#361](https://github.com/kunchenguid/quota-axi/issues/361)) ([e56df71](https://github.com/kunchenguid/quota-axi/commit/e56df71f777c9e5824aa9379f48d0941ce44595d))
+
+## [0.1.68](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.67...quota-axi-v0.1.68) (2026-10-26)
+
+
+### Features
+
+* **providers:** read Copilot quota for GitHub Enterprise Cloud (ghe.com) hosts ([#358](https://github.com/kunchenguid/quota-axi/issues/358)) ([91dc7dd](https://github.com/kunchenguid/quota-axi/commit/91dc7dd5007eb3292a6c8b622595460830d5cb85))
+
+## [0.1.67](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.66...quota-axi-v0.1.67) (2026-10-24)
+
+
+### Bug Fixes
+
+* **deps:** update undici to 6.29.1 ([#350](https://github.com/kunchenguid/quota-axi/issues/350)) ([e68103e](https://github.com/kunchenguid/quota-axi/commit/e68103e8e65eaa22d7f6581bba78eed5d951944a))
+
+## [0.1.66](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.65...quota-axi-v0.1.66) (2026-10-22)
+
+
+### Bug Fixes
+
+* **providers:** report Gemini 4 Argon under its own Antigravity window id ([#345](https://github.com/kunchenguid/quota-axi/issues/345)) ([9bad9f3](https://github.com/kunchenguid/quota-axi/commit/9bad9f3593f02ca05cbb015e34db7e68e9650190))
+
+## [0.1.65](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.64...quota-axi-v0.1.65) (2026-10-20)
+
+
+### Features
+
+* **opencode-go:** read OpenCode 2.x credentials from opencode.db ([#341](https://github.com/kunchenguid/quota-axi/issues/341)) ([040fe36](https://github.com/kunchenguid/quota-axi/commit/040fe36178518cc04c21d35742b670fe31225e4d))
+
 ## [0.1.64](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.63...quota-axi-v0.1.64) (2026-10-15)
 
 

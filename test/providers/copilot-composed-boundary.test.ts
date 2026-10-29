@@ -123,6 +123,7 @@ beforeEach(() => {
     "GITHUB_TOKEN",
     "COPILOT_GH_HOST",
     "GH_HOST",
+    "QUOTA_AXI_COPILOT_HOST",
   ])
     vi.stubEnv(name, undefined);
   select("account-a");
@@ -154,6 +155,29 @@ afterEach(() => {
 });
 
 describe("Copilot composed credential boundaries", () => {
+  it("keeps public plaintext and secure-store tokens out of GHE requests", async () => {
+    vi.stubEnv("QUOTA_AXI_COPILOT_HOST", "acme.ghe.com");
+    select("account-a", { "https://github.com:account-a": tokenA });
+    mkdirSync(join(fixture.home, "gh"));
+    writeFileSync(
+      join(fixture.home, "gh/hosts.yml"),
+      `acme.ghe.com:\n  oauth_token: ${ghToken}\n`,
+    );
+
+    const report = await fetchQuota(optIn);
+
+    expect(report).toMatchObject({ source: "api", state: { status: "fresh" } });
+    expect(providerFetch).toHaveBeenCalledExactlyOnceWith(
+      "https://api.acme.ghe.com/copilot_internal/user",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: `Bearer ${ghToken}`,
+        }),
+      }),
+    );
+    expect(execFileText).not.toHaveBeenCalled();
+  });
+
   it.each(["darwin", "win32", "linux"] as const)(
     "uses the exact selected plaintext fallback on %s without exposing or caching its token",
     async (platform) => {
