@@ -69,15 +69,17 @@ const DEFAULT_ACCOUNT_KEY = "default";
 const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
 
 /**
- * Providers whose snapshots record which account they belong to, because the
- * cache slot alone does not say: a Claude profile selects the credential store,
+ * Providers whose snapshots record their account or host because the cache slot
+ * alone does not say: a Claude profile selects the credential store,
  * a Kimi Code `config.toml` selects the deployment, Command Code's `whoami`
  * identifies the source-plus-account pair, an ElevenLabs API key is itself the
  * account, MiniMax stamps by credential source plus deployment host, a Muse
  * credential is the only local thing naming its subscription, and a Codex slot
- * can be signed in to another ChatGPT account. A snapshot from one such context
- * says nothing about another, so each is stamped on write and checked on stale
- * reuse - strictly for Claude, Kimi, Command Code, MiniMax, ElevenLabs, Devin,
+ * can be signed in to another ChatGPT account. Copilot's opt-in selects a GitHub
+ * host, so its snapshot must not cross between public and enterprise hosts.
+ * A snapshot from one such context says nothing about another, so each is
+ * stamped on write and checked on stale reuse - strictly for Claude, Kimi,
+ * Command Code, MiniMax, ElevenLabs, Devin,
  * OpenRouter, and Muse, whose identity a reading always has (and which skip write and clear
  * when that identity is missing). Codex can write an unstamped snapshot, but
  * stale reuse requires a matching stored account id. Z.AI likewise requires an
