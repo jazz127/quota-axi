@@ -14,6 +14,8 @@ import { elevenLabsReadingContextId } from "./providers/elevenlabs-cache-context
 import { miniMaxReadingContextId } from "./providers/minimax-cache-context.js";
 import { openRouterReadingContextId } from "./providers/openrouter-cache-context.js";
 import { museReadingContextId } from "./providers/muse-cache-context.js";
+import { zaiReadingContextId } from "./providers/zai-cache-context.js";
+import { copilotGithubHost } from "./providers/copilot-host.js";
 import { isPiCodexSource } from "./providers/pi-codex-credential.js";
 import { claudeReadingContextId as claudePiReadingContextId } from "./providers/claude-cache-context.js";
 import { fetchLockPath, withLockSync } from "./lib/fetch-lock.js";
@@ -78,7 +80,8 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
  * reuse - strictly for Claude, Kimi, Command Code, MiniMax, ElevenLabs, Devin,
  * OpenRouter, and Muse, whose identity a reading always has (and which skip write and clear
  * when that identity is missing). Codex can write an unstamped snapshot, but
- * stale reuse requires a matching stored account id.
+ * stale reuse requires a matching stored account id. Z.AI likewise requires an
+ * identity, stamped on the reading from the key that actually answered.
  *
  * How that stamp is obtained is not the same question for each. A Claude
  * profile is fixed by this process's own environment, so deriving it here reads
@@ -115,7 +118,19 @@ const CONTEXT_SCOPED_PROVIDERS: Partial<
   minimax: miniMaxReadingContextId,
   openrouter: openRouterReadingContextId,
   muse: museReadingContextId,
+  copilot: copilotReadingContextId,
+  zai: zaiReadingContextId,
 };
+
+export function copilotCacheContextId(host: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify(["copilot-host-v1", host]))
+    .digest("hex");
+}
+
+function copilotReadingContextId(): string {
+  return copilotCacheContextId(copilotGithubHost());
+}
 
 /**
  * The stored ChatGPT account id the credential that produced this report named.
@@ -578,6 +593,13 @@ export function readCachedElevenLabsProvider(
   return readCachedProviderInContext("elevenlabs", contextId);
 }
 
+/** Z.AI stale quota belongs only to the key that produced the snapshot. */
+export function readCachedZaiProvider(
+  contextId: string,
+): ProviderQuota | undefined {
+  return readCachedProviderInContext("zai", contextId);
+}
+
 /**
  * Devin stale quota may only be reused when the cache record proves it was
  * captured for the same source, host, and key, so one login's windows can
@@ -598,6 +620,12 @@ export function readCachedMuseProvider(
   contextId: string,
 ): ProviderQuota | undefined {
   return readCachedProviderInContext("muse", contextId);
+}
+
+export function readCachedCopilotProvider(
+  contextId: string,
+): ProviderQuota | undefined {
+  return readCachedProviderInContext("copilot", contextId);
 }
 
 function readCachedProviderInContext(

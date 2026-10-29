@@ -8,7 +8,7 @@ import {
 import { resolveGhCliCredential } from "../../src/providers/gh-cli-credential.js";
 import { readBoundedFile, readJsonFileResult } from "../../src/lib/fs.js";
 import { providerFetch } from "../../src/lib/http.js";
-import { readCachedProvider } from "../../src/cache.js";
+import { readCachedCopilotProvider as readCachedProvider } from "../../src/cache.js";
 import { degradedSources } from "../../src/lib/source-attempts.js";
 vi.mock("../../src/providers/copilot-cli-credential.js", async (actual) => ({
   ...(await actual<
@@ -23,7 +23,10 @@ vi.mock("../../src/providers/gh-cli-credential.js", () => ({
   resolveGhCliCredential: vi.fn(),
 }));
 vi.mock("../../src/lib/http.js", () => ({ providerFetch: vi.fn() }));
-vi.mock("../../src/cache.js", () => ({ readCachedProvider: vi.fn() }));
+vi.mock("../../src/cache.js", () => ({
+  readCachedCopilotProvider: vi.fn(),
+  copilotCacheContextId: (host: string) => `ctx:${host}`,
+}));
 vi.mock("../../src/lib/fs.js", async (actual) => ({
   ...(await actual<typeof import("../../src/lib/fs.js")>()),
   readJsonFileResult: vi.fn(),
@@ -62,6 +65,7 @@ function nativeUnavailable(error: string, credentialPresent = true) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("COPILOT_HOME", "/synthetic/copilot");
+  vi.stubEnv("QUOTA_AXI_COPILOT_HOST", undefined);
   vi.mocked(readBoundedFile).mockResolvedValue(selectedAccountConfig);
   vi.mocked(readJsonFileResult).mockReturnValue({ status: "missing" });
   vi.mocked(resolveCopilotCliCredential).mockResolvedValue({
@@ -85,6 +89,20 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("Copilot secure-source integration", () => {
+  it("checks plaintext cache silence without requesting a token value", async () => {
+    vi.mocked(readJsonFileResult).mockReturnValue({
+      status: "success",
+      value: { "github.com": { oauth_token: "gho_apps_synthetic" } },
+    });
+    vi.mocked(providerFetch).mockRejectedValue(new Error("network failed"));
+
+    await fetchQuota(options);
+
+    expect(resolveCopilotCliConfigCredential).toHaveBeenCalledExactlyOnceWith(
+      "silence",
+    );
+  });
+
   it.each([
     ["selects an account", false],
     ["selects no account", true],
